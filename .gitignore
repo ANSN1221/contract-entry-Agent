@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# uv
+uv.lock.bak
+
+# 环境变量（含密钥，绝不入库）
+.env
+.env.local
+
+# 数据与运行产物
+*.db
+*.sqlite
+*.sqlite3
+data/
+uploads/
+logs/
+.checkpoints/
+
+# 测试与工具缓存
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# 前端
+node_modules/
+frontend/dist/
+
+# 编辑器 / 系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# 与本仓库无关的临时文件（其他任务产出，勿入库）
+/bagou_manual.md
+/build_manual_pdf.py
+/面试八股速查手册-*.pdf

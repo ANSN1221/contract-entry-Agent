@@ -1,0 +1,55 @@
+"""应用工厂：装配顺序 = 日志 → 错误体 → 中间件 → 路由。
+
+用工厂而不是模块级单例，测试才能拿到互不干扰的实例。
+"""
+
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+
+from app.api.v1 import api_router, health
+from app.config import Settings, get_settings
+from app.errors import register_exception_handlers
+from app.log import configure_logging, get_logger
+from app.middleware import RateLimitMiddleware, RequestContextMiddleware
+
+log = get_logger("app.main")
+
+
+def create_app(settings: Settings | None = None) -> FastAPI:
+    settings = settings or get_settings()
+    configure_logging(settings)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        log.info(
+            "app_started",
+            service=settings.app_name,
+            version=settings.version,
+            env=settings.env,
+        )
+        yield
+        log.info("app_stopped")
+
+    app = FastAPI(
+        title="合同录入执行 Agent",
+        version=settings.version,
+        summary="上传合同 PDF → 抽取字段 → 人工确认 → 写库",
+        lifespan=lifespan,
+    )
+    app.state.settings = settings
+
+    register_exception_handlers(app)
+    # 后加的在更外层：RequestContext 包住限流，被限流的请求也有 request_id 和访问日志
+    app.add_middleware(RateLimitMiddleware, settings=settings)
+    app.add_middleware(RequestContextMiddleware)
+
+    app.include_router(health.router)
+    app.include_router(api_router, prefix="/api/v1")
+    return app
+
+
+app = create_app()
