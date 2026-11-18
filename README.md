@@ -63,6 +63,7 @@ app/
     └── v1/
         ├── __init__.py  # v1 路由汇总
         └── health.py    # /healthz /readyz
+docs/                  # 文件名中英对照等说明文档
 tests/                 # 状态机单测 / API 契约 / 并发幂等（随排期补）
 ```
 
