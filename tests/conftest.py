@@ -21,7 +21,8 @@ def pytest_configure(config: pytest.Config) -> None:
 
 @pytest.fixture()
 def settings() -> Settings:
-    return Settings(env="test", log_level="WARNING", rate_limit_per_minute=0)
+    # _env_file=None：测试不读本机 .env，否则开发者配了密钥就跑不过鉴权用例
+    return Settings(_env_file=None, env="test", log_level="WARNING", rate_limit_per_minute=0)
 
 
 @pytest.fixture()
@@ -52,7 +53,7 @@ def file_db(tmp_path: Path) -> Iterator[Database]:
 def api_client(file_db: Database) -> Iterator[TestClient]:
     """HTTP 集成测试专用：把进程单例数据库换成临时文件库，请求走真实路由链。"""
     set_database(file_db)
-    settings = Settings(env="test", log_level="WARNING", rate_limit_per_minute=0)
+    settings = Settings(_env_file=None, env="test", log_level="WARNING", rate_limit_per_minute=0)
     try:
         with TestClient(create_app(settings)) as c:
             yield c
@@ -78,5 +79,5 @@ def make_task(**overrides) -> Task:
 
 def make_client(**overrides) -> TestClient:
     """按需改配置造客户端（限流、鉴权这类要特定配置的用例用）。"""
-    base = {"log_level": "WARNING", "rate_limit_per_minute": 0}
-    return TestClient(create_app(Settings(**{**base, **overrides})))
+    base = {"env": "test", "log_level": "WARNING", "rate_limit_per_minute": 0}
+    return TestClient(create_app(Settings(_env_file=None, **{**base, **overrides})))

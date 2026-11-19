@@ -215,8 +215,14 @@ def test_unexpected_exception_wrapped() -> None:
     assert "RuntimeError" in exc.value.message
 
 
-def test_default_retriever_reports_missing_package() -> None:
-    """没装 contract-qa 时，默认检索器要把部署问题翻译成 RAG_UNAVAILABLE。"""
+def test_default_retriever_translates_missing_package(monkeypatch) -> None:  # noqa: ANN001
+    """未装 contract-qa 时，默认检索器要把部署问题翻译成 RAG_UNAVAILABLE。"""
+
+    def _missing(*_: object, **__: object) -> list[ClauseHit]:
+        raise RagUnavailable("contract-qa 未安装")
+
+    # 真实环境可能已安装并建好索引，这里强制模拟缺包
+    monkeypatch.setattr("app.adapters.rag._retriever", _missing)
     with pytest.raises(ToolError) as exc:
         run_tool("search_clauses", {"query": "付款"})
     assert exc.value.code == "RAG_UNAVAILABLE"

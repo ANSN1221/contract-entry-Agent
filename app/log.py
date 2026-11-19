@@ -22,13 +22,14 @@ def configure_logging(settings: Settings) -> None:
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso", utc=False),
         structlog.processors.StackInfoRenderer(),
-        structlog.processors.format_exc_info,
     ]
-    renderer = (
-        structlog.processors.JSONRenderer(ensure_ascii=False)
-        if settings.log_json
-        else structlog.dev.ConsoleRenderer(colors=False)
-    )
+    if settings.log_json:
+        # JSON 渲染器不会自己格式化异常，必须显式加；ConsoleRenderer 自己会做，
+        # 加了反而丢可读性（structlog 会warning）
+        shared.append(structlog.processors.format_exc_info)
+        renderer = structlog.processors.JSONRenderer(ensure_ascii=False)
+    else:
+        renderer = structlog.dev.ConsoleRenderer(colors=False)
 
     structlog.configure(
         processors=[*shared, renderer],
