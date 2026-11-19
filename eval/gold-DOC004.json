@@ -1,0 +1,27 @@
+{
+  "document": "doc04_beijing_security_testing_contract.pdf",
+  "doc_id": "DOC004",
+  "note": "真实政府采购合同（等保测评服务）。无合同编号、无签订日期、无履约保证金、无质保期条款，四项均标 null；争议解决条款勾选「第二种方式」= 诉讼。",
+  "fields": {
+    "contract_no": { "expected": null, "clause": null },
+    "party_a": { "expected": "北京市城市管理综合行政执法局执法保障中心", "clause": "DOC004-C0001" },
+    "party_b": { "expected": "北京市产品质量监督检验研究院", "clause": "DOC004-C0001" },
+    "total_amount": { "expected": "1180000", "clause": "DOC004-C0007-1" },
+    "signed_date": { "expected": null, "clause": null },
+    "effective_date": { "expected": null, "clause": null },
+    "performance_period": { "expected": "自合同签订之日起至 2025-11-30", "clause": "DOC004-C0006" },
+    "payment_terms": { "expected": "生效后一个月内 60%，2025 年第三季度 20%，验收后 20%", "clause": "DOC004-C0007-1" },
+    "breach_liability": { "expected": "每延误一天扣合同总额 1%，上限 30%", "clause": "DOC004-C0011-1" },
+    "dispute_resolution": { "expected": "甲方所在地人民法院起诉", "clause": "DOC004-C0012" },
+    "deposit_ratio": { "expected": null, "clause": null },
+    "warranty_period": { "expected": null, "clause": null }
+  },
+  "unanswerable": [
+    "项目经理手机号码",
+    "乙方开户行账号的支行行号",
+    "甲方统一社会信用代码",
+    "乙方法定代表人的身份证号码",
+    "合同印花税税率",
+    "乙方上年度审计报告编号"
+  ]
+}

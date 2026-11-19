@@ -75,3 +75,12 @@ def test_match_tolerates_function_word_difference() -> None:
 
 def test_match_rejects_unrelated_long_text() -> None:
     assert not match("发包人所在地人民法院诉讼", "提交北京仲裁委员会仲裁，裁决为终局")
+
+
+def test_numbers_not_glued_across_punctuation() -> None:
+    """「70%，6 个月」不能拼成 706——这会让正确的付款方式被判错。"""
+    assert numbers("付 70%，6 个月后付至 95%") == {"70", "6", "95"}
+
+
+def test_numbers_no_scientific_notation() -> None:
+    assert numbers("1280000.00") == {"1280000"}

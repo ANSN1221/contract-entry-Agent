@@ -128,10 +128,26 @@ def normalize(text: str | None) -> str:
 
 
 def numbers(text: str | None) -> set[str]:
-    """抽出所有数值 token（含小数），去掉前导零，日期拆成三段数字后两端可比。"""
-    normalized = normalize(text)
-    tokens = re.findall(r"\d+(?:\.\d+)?", normalized)
-    return {f"{float(token):g}" for token in tokens}
+    """抽出所有数值 token（含小数），去掉前导零，日期拆成三段数字后两端可比。
+
+    先把非数字字符换成空格再取数：否则「70%，6 个月」会被拼成 706。
+    """
+    # 夹在数字间的逗号是千分位，先去掉；其余标点一律当分隔符
+    prepared = re.sub(r"(?<=\d)[,，](?=\d)", "", text or "")
+    normalized = normalize_numbers(prepared)
+    spaced = re.sub(r"[^\d.]+", " ", normalized)
+    tokens = re.findall(r"\d+(?:\.\d+)?", spaced)
+    return {_canon_number(token) for token in tokens}
+
+
+def _canon_number(token: str) -> str:
+    """去掉前导零与小数尾零，但不用科学计数法（1280000 不能变成 1.28e+06）。"""
+    if "." in token:
+        whole, _, frac = token.partition(".")
+        frac = frac.rstrip("0")
+        whole = whole.lstrip("0") or "0"
+        return f"{whole}.{frac}" if frac else whole
+    return token.lstrip("0") or "0"
 
 
 def match(expected: str, actual: str | None) -> bool:
