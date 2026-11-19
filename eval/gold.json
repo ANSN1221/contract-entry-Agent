@@ -1,0 +1,29 @@
+{
+  "document": "合同样例-软件服务采购.pdf",
+  "doc_id": "DOC901",
+  "note": "合成合同，字段值以 scripts/make_sample_contract.py 生成的正文为准。expected 为 null 表示合同里确实没写，抽到值即为错。",
+  "fields": {
+    "contract_no": { "expected": "HT-2026-0418", "clause": "DOC901-C0001" },
+    "party_a": { "expected": "江南智造科技有限公司", "clause": "DOC901-C0001" },
+    "party_b": { "expected": "北辰云软件服务有限公司", "clause": "DOC901-C0001" },
+    "total_amount": { "expected": "1280000.00", "clause": "DOC901-C0003" },
+    "signed_date": { "expected": "2026-03-12", "clause": "DOC901-C0014" },
+    "effective_date": { "expected": null, "clause": null },
+    "performance_period": { "expected": "2026-04-01 至 2027-03-31", "clause": "DOC901-C0005" },
+    "payment_terms": { "expected": "30% 预付 50% 上线 20% 质保", "clause": "DOC901-C0004" },
+    "breach_liability": { "expected": "每日 0.05% 上限 10%", "clause": "DOC901-C0012" },
+    "dispute_resolution": { "expected": "上海仲裁委员会", "clause": "DOC901-C0013" },
+    "deposit_ratio": { "expected": "5", "clause": "DOC901-C0008" },
+    "warranty_period": { "expected": "12 个月", "clause": "DOC901-C0011" }
+  },
+  "unanswerable": [
+    "项目经理手机号码是多少",
+    "乙方法定代表人的身份证号",
+    "甲方的开户银行账号",
+    "合同履约保证金的具体银行名称",
+    "乙方的社保缴纳人数",
+    "甲方去年的营业收入",
+    "项目验收组专家名单",
+    "合同印花税税号"
+  ]
+}

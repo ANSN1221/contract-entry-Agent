@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     # 后台执行器
     runner_workers: int = 2  # 0 表示不启动 worker（测试用）
     runner_timeout_seconds: float = 120.0  # 单任务执行上限
+    max_attempts: int = 3  # 同一任务最多执行次数，超了进死信
     checkpoint_path: str = "data/checkpoints.db"  # LangGraph 断点存储
 
     # 鉴权：三项都不为空才算开启。dev 留空放行，prod 留空直接拒绝（fail closed）

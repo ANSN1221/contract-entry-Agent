@@ -33,6 +33,9 @@ from app.store import Database
 
 log = get_logger("app.runner")
 
+#: `_begin` 的返回值：None 表示可以执行，DEAD 表示已进死信、不要执行
+DEAD = "dead"
+
 
 @dataclass(slots=True)
 class RunOutcome:
@@ -144,7 +147,12 @@ class TaskRunner:
 
     async def run_task(self, task_id: str, *, resume: bool = False) -> RunOutcome:
         graph = await self._ensure_graph()
-        self._begin(task_id, resume=resume)
+        if self._begin(task_id, resume=resume) == DEAD:
+            return RunOutcome(
+                task_id=task_id,
+                status=TaskStatus.FAILED.value,
+                error=f"超过最大执行次数（{self.settings.max_attempts}），已进死信",
+            )
 
         config = {"configurable": {"thread_id": task_id}}
         try:
@@ -167,7 +175,7 @@ class TaskRunner:
 
     # ---------- 落库 ----------
 
-    def _begin(self, task_id: str, *, resume: bool) -> None:
+    def _begin(self, task_id: str, *, resume: bool) -> str | None:
         with self.database.session() as session:
             task = session.get(Task, task_id)
             if task is None:
@@ -179,6 +187,35 @@ class TaskRunner:
                     message=f"任务已处于终态（{task.status}），不能再执行",
                     detail={"task_id": task_id, "status": task.status},
                 )
+
+            # 死信：反复失败的任务不再重试，转终态并留证据，避免无限占用 worker
+            if task.attempt >= self.settings.max_attempts:
+                task.error_code = "DEAD_LETTER"
+                task.blocked_reason = (
+                    f"已执行 {task.attempt} 次仍未成功，超过上限 {self.settings.max_attempts}"
+                )
+                task.updated_at = utcnow()
+                session.add(task)
+                session.flush()
+                if task.status != TaskStatus.RUNNING.value:
+                    transition(
+                        session,
+                        task,
+                        TaskStatus.RUNNING,
+                        reason="死信归档前校正状态",
+                        actor="runner",
+                    )
+                transition(
+                    session, task, TaskStatus.FAILED, reason="超过最大执行次数", actor="runner"
+                )
+                emit(
+                    session,
+                    task_id,
+                    EventType.FAILED,
+                    {"code": "DEAD_LETTER", "attempts": task.attempt},
+                )
+                log.warning("task_dead_letter", task_id=task_id, attempts=task.attempt)
+                return DEAD
 
             if task.status == TaskStatus.PENDING.value:
                 transition(session, task, TaskStatus.RUNNING, reason="调度器领取", actor="runner")
@@ -194,6 +231,7 @@ class TaskRunner:
             task.updated_at = utcnow()
             session.add(task)
             session.flush()
+            return None
 
     def _finish(self, task_id: str, result: dict[str, Any]) -> RunOutcome:
         outcome = str(result.get("outcome") or "failed")

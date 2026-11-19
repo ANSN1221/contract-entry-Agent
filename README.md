@@ -47,6 +47,7 @@ uv sync --extra dev
 | 签发短期 token | `uv run python scripts/issue_token.py --subject dev --ttl 3600` |
 | 生成合成合同样例 | `uv run python scripts/make_sample_contract.py` |
 | 跑真实模型链路测试 | `RUN_LIVE_LLM=1 uv run pytest tests/test_extract_live.py` |
+| 跑评测 | `uv run python scripts/evaluate.py` |
 | 建库 / 升级到最新 | `uv run alembic upgrade head` |
 | 改完模型生成迁移 | `uv run alembic revision --autogenerate -m "描述"` |
 | 回退一步 | `uv run alembic downgrade -1` |
@@ -128,9 +129,10 @@ pending ──→ running ──→ await_confirm ──→ done
 | 11-25 ~ 11-27 | 工具与主链路（条款检索 / 证据校验 / 抽取提示词 / 编排） | 全部完成：检索 + 抽取 + 校验 + 主图 + 执行器 |
 | 11-30 | 幂等键 + confirm_token + 乐观锁 | 已完成（幂等键在创建、token 在确认、乐观锁在两处） |
 | 12-01 | SSE 事件通道 + 断点续跑 | 已完成 |
+| 12-02 ~ 12-04 | 异常分支细化 + 指标 + 评测 | 已完成 |
 | 后续 | 见项目计划书第八章 | — |
 
-已完成：`uv` 工程装配、路径依赖接入、应用工厂、统一错误体、request_id 中间件、限流、结构化日志、`/healthz` `/readyz`、SQLModel 四张表、Alembic 迁移、状态机白名单 + 乐观锁 + 审计链、任务仓储层、任务 CRUD API、Bearer 鉴权、工具白名单与参数强校验、条款检索工具、12 字段抽取与证据校验、LangGraph 主图、后台执行器、一次性 confirm_token 确认写库、SSE 事件流、SQLite 持久化断点续跑、208 条测试。
+已完成：`uv` 工程装配、路径依赖接入、应用工厂、统一错误体、request_id 中间件、限流、结构化日志、`/healthz` `/readyz`、SQLModel 四张表、Alembic 迁移、状态机白名单 + 乐观锁 + 审计链、任务仓储层、任务 CRUD API、Bearer 鉴权、工具白名单与参数强校验、条款检索工具、12 字段抽取与证据校验、LangGraph 主图、后台执行器、一次性 confirm_token 确认写库、SSE 事件流、SQLite 持久化断点续跑、Prometheus 指标、评测脚本、死信上限、238 条测试。
 
 ## 鉴权
 
@@ -167,6 +169,8 @@ token 是 `v1.<payload>.<签名>` 三段式，HS256 自签，不引 JWT 库：�
 | `POST /api/v1/tasks/{id}/run` | 执行任务（检索 → 抽取 → 校验 → 待确认）；`?wait=true` 同步等结果，`?resume=true` 从断点续跑 |
 | `POST /api/v1/tasks/{id}/confirm` | 人工确认：带一次性 `confirm_token` + 可选的人工修正字段，成功后转 `done` 并写库；二次提交 409 |
 | `GET /api/v1/tasks/{id}/events` | SSE 事件流：`Last-Event-ID` 断线补发，`?follow=false` 只回放已有事件，`?token=` 给不能设请求头的 `EventSource` 用 |
+| `GET /metrics` | Prometheus 文本指标（免鉴权，与探针同理） |
+| `GET /api/v1/metrics` | 指标快照 JSON：任务分布、成功率、分位耗时、字段校验分布 |
 
 ## 执行链路
 
@@ -252,6 +256,32 @@ effective_date      -                       0.00  -             → 待确认（
 | 鉴权 | `EventSource` 不能设请求头，仅 SSE 端点额外接受 `?token=` |
 
 **断点续跑**用 `AsyncSqliteSaver`，`thread_id` 就是 `task_id`。为什么必须是异步版：LangGraph 的同步 `SqliteSaver` 不支持 `ainvoke`，会直接抛 `NotImplementedError`。连接随应用生命周期开关，测试里换连接即可模拟「进程被 kill 再起来」，图会从最后一个成功的节点继续，已完成节点不重跑。
+
+## 可观测与评测
+
+**指标从数据库聚合，不用进程内计数器**：进程重启数字归零、多 worker 各算各的，排查时对不上账。任务表/字段表/事件表本身就是事实来源，聚合只是换个视角重读一遍。
+
+| 指标 | 含义 |
+| --- | --- |
+| `contract_tasks_total` / `_status{status}` | 任务总量与状态分布 |
+| `contract_tasks_success_rate` | 成功率 = done / (done + failed + blocked) |
+| `contract_task_duration_avg_seconds` / `_p95_seconds` | 端到端耗时均值与 P95 |
+| `contract_fields_needs_review` / `_verified` / `_rejected` | 字段证据链健康度 |
+| `contract_extraction_retries_total` | 重抽次数，飙升说明提示词在退化 |
+
+**评测脚本**（`uv run python scripts/evaluate.py`）分三个口径算，因为失败原因完全不同：
+
+| 指标 | 口径 | 实测 |
+| --- | --- | --- |
+| 字段准确率 | 12 字段与人工标注比对 | **12/12 = 100%** |
+| 引用可核对率 | 抽到值的字段带出处且证据通过 | **100%** |
+| 不可答正确率 | 8 个语料里确实没答案的问题，模型不许编 | **8/8 = 100%** |
+| 成本 | 单份合同 | 2165 token，7.7 秒 |
+| 待人工确认 | 低置信 / 未验证 / 校验不过 | 1 个（effective_date，合同确实没写） |
+
+匹配规则本身有测试（`tests/test_eval_matcher.py`）：中文数字、百分比、日期格式差异必须判对，真实错配必须判错——规则错了，分数就是假的。
+
+> 口径说明：当前评测集是 1 份合成合同（12 字段 + 8 个不可答问题）。真实语料（15 份公开采购合同）需要先下载到 `Contract-qa-RAG/data/raw/`，补上后同一套脚本可直接跑。
 
 ## 设计约定
 - **状态机**：白名单表 `ALLOWED_TRANSITIONS` 是唯一判定源，非法迁移抛 `InvalidTransition`；迁移与审计写在同一事务，中途失败不留半条记录。

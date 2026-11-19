@@ -29,6 +29,9 @@ logs/
 .coverage
 htmlcov/
 
+# 评测报告（每次生成的产物，不入库）
+eval/report.json
+
 # 前端
 node_modules/
 frontend/dist/

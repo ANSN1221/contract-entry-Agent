@@ -268,3 +268,61 @@ async def test_attempt_counter_increments(db: Database) -> None:
     await runner.run_task(task_id)
 
     assert get_task(db, task_id).attempt == 1
+
+
+# ---------- 死信 ----------
+
+
+async def test_dead_letter_after_max_attempts(db: Database) -> None:
+    """反复失败的任务不再重试，转终态并留证据。"""
+    graph = FakeGraph(make_result("done", review_keys=[], verified={}))
+    runner = make_runner(db, graph, max_attempts=2)
+    task_id = create_task(db)
+    with db.session() as session:
+        task = session.get(Task, task_id)
+        assert task is not None
+        task.attempt = 2  # 已经跑过两次
+        session.add(task)
+
+    outcome = await runner.run_task(task_id)
+
+    assert outcome.status == TaskStatus.FAILED.value
+    assert "死信" in outcome.error
+    task = get_task(db, task_id)
+    assert task.error_code == "DEAD_LETTER"
+    assert graph.calls == []  # 没有再执行图
+    assert transitions(db, task_id)[-1] == "running->failed"
+
+
+async def test_dead_letter_emits_event(db: Database) -> None:
+    from app.events import list_events
+
+    runner = make_runner(db, FakeGraph(make_result()), max_attempts=1)
+    task_id = create_task(db)
+    with db.session() as session:
+        task = session.get(Task, task_id)
+        assert task is not None
+        task.attempt = 1
+        session.add(task)
+
+    await runner.run_task(task_id)
+
+    with db.session() as session:
+        types = [e.type for e in list_events(session, task_id)]
+    assert "task.failed" in types
+
+
+async def test_attempts_below_limit_still_run(db: Database) -> None:
+    graph = FakeGraph(make_result("await_confirm"))
+    runner = make_runner(db, graph, max_attempts=3)
+    task_id = create_task(db)
+    with db.session() as session:
+        task = session.get(Task, task_id)
+        assert task is not None
+        task.attempt = 1
+        session.add(task)
+
+    outcome = await runner.run_task(task_id)
+
+    assert outcome.status == TaskStatus.AWAIT_CONFIRM.value
+    assert get_task(db, task_id).attempt == 2

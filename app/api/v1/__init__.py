@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.api.v1 import events, tasks
+from app.api.v1 import events, metrics, tasks
 
 api_router = APIRouter()
 api_router.include_router(tasks.router)
 api_router.include_router(events.router)
+api_router.include_router(metrics.router)
 
 __all__ = ["api_router"]
