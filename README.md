@@ -44,6 +44,7 @@ uv sync --extra dev
 | 用途 | 命令 |
 | --- | --- |
 | 启动 | `uv run uvicorn app.main:app --reload` |
+| 签发短期 token | `uv run python scripts/issue_token.py --subject dev --ttl 3600` |
 | 建库 / 升级到最新 | `uv run alembic upgrade head` |
 | 改完模型生成迁移 | `uv run alembic revision --autogenerate -m "描述"` |
 | 回退一步 | `uv run alembic downgrade -1` |
@@ -125,7 +126,31 @@ pending ──→ running ──→ await_confirm ──→ done
 | 11-25 ~ 11-27 | 工具与主链路（条款检索 / 证据校验 / 抽取提示词 / 编排） | 待做 |
 | 后续 | 见项目计划书第八章 | — |
 
-已完成：`uv` 工程装配、路径依赖接入、应用工厂、统一错误体、request_id 中间件、限流、结构化日志、`/healthz` `/readyz`、SQLModel 三张表、Alembic 初始迁移、状态机白名单 + 乐观锁 + 审计链、任务仓储层、任务 CRUD API（幂等创建 / 分页 / 状态筛选 / 状态迁移）、83 条测试。
+已完成：`uv` 工程装配、路径依赖接入、应用工厂、统一错误体、request_id 中间件、限流、结构化日志、`/healthz` `/readyz`、SQLModel 三张表、Alembic 初始迁移、状态机白名单 + 乐观锁 + 审计链、任务仓储层、任务 CRUD API（幂等创建 / 分页 / 状态筛选 / 状态迁移）、Bearer 鉴权（短期签名 token + 静态 token）、101 条测试。
+
+## 鉴权
+
+三档策略，按配置自动升降；探针 `/healthz` `/readyz` 永远公开，否则部署平台探活会全挂。
+
+| 配置 | 行为 |
+| --- | --- |
+| 填 `API_TOKEN_SECRET` | 只认短期签名 token（`Authorization: Bearer <token>`） |
+| 只填 `API_TOKEN` | 只认这个长期 token，可走 `Authorization` 或 `X-API-Key` |
+| 都不填 + dev/test | 放行，日志留 `auth_disabled` 痕迹 |
+| 都不填 + prod | 全部拒绝（fail closed），避免忘配凭证就裸奔 |
+
+```bash
+# 1. 生成密钥写进 .env
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+
+# 2. 签发有效期 1 小时的 token
+uv run python scripts/issue_token.py --subject dev --ttl 3600
+
+# 3. 调用
+curl -H "Authorization: Bearer <token>" http://127.0.0.1:8000/api/v1/tasks
+```
+
+token 是 `v1.<payload>.<签名>` 三段式，HS256 自签，不引 JWT 库：只有「签发 / 校验 / 过期」三个需求，用不到算法白名单、密钥轮换那套。校验用 `hmac.compare_digest` 走常量时间比较，失败一律 401 且不透露错在哪一步（签名错和过期给不同 message，但都不含内部细节）。`/docs` 上有 Authorize 按钮可直接填。
 
 ## 任务 API
 
@@ -144,6 +169,7 @@ pending ──→ running ──→ await_confirm ──→ done
 - **幂等**：上传带 `Idempotency-Key`，重复返回同一 task；写库靠唯一约束；确认用一次性 `confirm_token`，二次提交 409。
 - **状态与连接解耦**：后台 runner 持有任务状态，浏览器关闭不影响任务推进。
 - **依赖隔离**：`contract_qa` 的内部数据结构不进入业务层，一律经 `app/adapters/` 转换成本项目类型。
+- **鉴权挂在路由组上**：`include_router(..., dependencies=[Depends(require_principal)])`，一次挂载覆盖所有 v1 接口，新增路由不用逐个记得加。
 
 ## 与项目一的关系
 

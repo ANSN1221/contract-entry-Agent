@@ -35,8 +35,10 @@ class Settings(BaseSettings):
     siliconflow_base_url: str = "https://api.siliconflow.cn/v1"
     embedding_model: str = "BAAI/bge-m3"
 
-    # 鉴权与限流：api_token 为空表示 dev 不校验；上线必须填
-    api_token: str = ""
+    # 鉴权：三项都不为空才算开启。dev 留空放行，prod 留空直接拒绝（fail closed）
+    api_token: str = ""  # 长期静态 token，开发/内网用
+    api_token_secret: str = ""  # 签名密钥，配了才能签发短期 token
+    api_token_ttl_seconds: int = 3600  # 短期 token 默认有效期
     rate_limit_per_minute: int = 120
 
     @property
@@ -45,7 +47,7 @@ class Settings(BaseSettings):
 
     @property
     def auth_enabled(self) -> bool:
-        return bool(self.api_token)
+        return bool(self.api_token or self.api_token_secret)
 
     @property
     def rate_limit_enabled(self) -> bool:

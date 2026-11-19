@@ -8,9 +8,10 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 
 from app.api.v1 import api_router, health
+from app.auth import require_principal
 from app.config import Settings, get_settings
 from app.errors import register_exception_handlers
 from app.log import configure_logging, get_logger
@@ -48,7 +49,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_middleware(RequestContextMiddleware)
 
     app.include_router(health.router)
-    app.include_router(api_router, prefix="/api/v1")
+    # 鉴权挂在整组 v1 路由上：后续新增接口自动受保护，不用逐个记得加
+    app.include_router(api_router, prefix="/api/v1", dependencies=[Depends(require_principal)])
     return app
 
 
