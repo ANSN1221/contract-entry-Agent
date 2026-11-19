@@ -50,6 +50,9 @@ class TransitionOut(BaseModel):
 
 class TaskDetail(TaskOut):
     transitions: list[TransitionOut]
+    fields: list[FieldOut] = Field(default_factory=list)
+    # 只有在 await_confirm 时才有值，前端拿它提交确认卡
+    confirm_token: str | None = None
 
 
 class TaskListOut(BaseModel):
@@ -66,8 +69,23 @@ class TransitionIn(BaseModel):
     actor: str = Field(default="system", min_length=1, max_length=40)
 
 
+class FieldUpdate(BaseModel):
+    """人工修正单个字段。值为 null 表示「确认这条确实没有」。"""
+
+    field_key: str = Field(min_length=1, max_length=40)
+    value: str | None = Field(default=None, max_length=2000)
+
+
+class ConfirmIn(BaseModel):
+    """确认卡提交。`fields` 是人改过的字段，只传改动的那些。"""
+
+    confirm_token: str = Field(min_length=8, max_length=64)
+    fields: list[FieldUpdate] = Field(default_factory=list)
+    version: int | None = Field(default=None, ge=0, description="带上则做乐观锁校验")
+
+
 class RunOut(BaseModel):
-    """执行结果。`review_keys` 是需要在确认卡上标红的字段。"""
+    """执行结果。`review_keys` 是需要在确认卡上标红的字段，`confirm_token` 用于提交确认。"""
 
     task_id: str
     status: str
@@ -77,6 +95,7 @@ class RunOut(BaseModel):
     tokens: dict[str, int] = Field(default_factory=dict)
     review_keys: list[str] = Field(default_factory=list)
     unsupported: list[str] = Field(default_factory=list)
+    confirm_token: str | None = None
 
 
 class FieldOut(BaseModel):

@@ -8,12 +8,14 @@
 
 from __future__ import annotations
 
+import secrets
+
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
-from app.errors import Conflict, NotFound
-from app.models import Task, TaskStatus, TaskTransition
+from app.errors import BadRequest, Conflict, Forbidden, NotFound
+from app.models import CONTRACT_FIELD_KEYS, Task, TaskField, TaskStatus, TaskTransition, utcnow
 from app.state_machine import (
     ConcurrentModification,
     InvalidTransition,
@@ -133,6 +135,119 @@ class TaskRepository:
     def _get_by_idempotency_key(self, session: Session, key: str) -> Task | None:
         stmt = select(Task).where(Task.idempotency_key == key)
         return session.exec(stmt).first()
+
+    def list_fields(self, session: Session, task_id: str) -> list[TaskField]:
+        stmt = select(TaskField).where(TaskField.task_id == task_id).order_by(TaskField.field_key)
+        return list(session.exec(stmt))
+
+    def confirm(
+        self,
+        session: Session,
+        *,
+        task_id: str,
+        confirm_token: str,
+        updates: list[tuple[str, str | None]],
+        actor: str,
+        version: int | None = None,
+        request_id: str | None = None,
+    ) -> Task:
+        """人工确认：校验一次性 token → 应用人工修改 → 转 done。
+
+        四道闸门，顺序按「越便宜越先」：任务存在 → 状态对 → token 对且没用过 → 版本对。
+        """
+        task = self.get(session, task_id)
+        if task is None:
+            raise NotFound("任务不存在", detail={"task_id": task_id})
+
+        if task.status != TaskStatus.AWAIT_CONFIRM.value:
+            raise Conflict(
+                code="TASK_NOT_AWAIT_CONFIRM",
+                message=f"任务当前状态为 {task.status}，不能确认",
+                detail={"task_id": task_id, "status": task.status},
+            )
+
+        if task.confirm_token_used_at is not None:
+            raise Conflict(
+                code="CONFIRM_ALREADY_USED",
+                message="确认凭证已被使用",
+                detail={"task_id": task_id, "used_at": task.confirm_token_used_at.isoformat()},
+            )
+
+        # 常量时间比较，避免按字节猜 token
+        if not task.confirm_token or not secrets.compare_digest(confirm_token, task.confirm_token):
+            raise Forbidden("确认凭证无效", detail={"task_id": task_id})
+
+        if version is not None and task.version != version:
+            raise Conflict(
+                code="CONCURRENT_MODIFICATION",
+                message="任务已被并发修改，请重新读取后重试",
+                detail={"expected_version": version, "actual_version": task.version},
+            )
+
+        self._apply_updates(session, task_id, updates)
+
+        task.confirm_token_used_at = utcnow()
+        task.updated_at = utcnow()
+        if task.blocked_reason and task.blocked_reason.startswith("字段校验未通过"):
+            task.blocked_reason = None
+        session.add(task)
+        session.flush()
+
+        try:
+            apply_transition(
+                session,
+                task,
+                TaskStatus.DONE,
+                reason="人工确认后写库",
+                actor=actor,
+                request_id=request_id,
+            )
+        except InvalidTransition as exc:  # 理论上到不了，白名单与状态检查重复兜底
+            raise Conflict(
+                code="INVALID_TRANSITION",
+                message=f"不允许的状态迁移：{exc.current} → {exc.target}",
+            ) from exc
+        return task
+
+    def _apply_updates(
+        self,
+        session: Session,
+        task_id: str,
+        updates: list[tuple[str, str | None]],
+    ) -> None:
+        if not updates:
+            # 没改动也要把待确认标记清掉：人工点了确认，等于全部认可
+            for field in self.list_fields(session, task_id):
+                field.needs_review = False
+                field.verified = True
+                field.verify_note = "human_confirmed"
+                field.updated_at = utcnow()
+                session.add(field)
+            return
+
+        known = {field.field_key: field for field in self.list_fields(session, task_id)}
+        for key, value in updates:
+            if key not in CONTRACT_FIELD_KEYS:
+                raise BadRequest(f"未知字段：{key}", detail={"field_key": key})
+            field = known.get(key)
+            if field is None:
+                field = TaskField(task_id=task_id, field_key=key)
+            field.value = value
+            field.needs_review = False
+            field.verified = True
+            field.verify_note = "human_confirmed"
+            field.updated_at = utcnow()
+            session.add(field)
+
+        # 没被修改的字段也同样视为已确认
+        for key, field in known.items():
+            if any(key == update_key for update_key, _ in updates):
+                continue
+            field.needs_review = False
+            field.verified = True
+            field.verify_note = "human_confirmed"
+            session.add(field)
+        session.flush()
 
 
 repository = TaskRepository()

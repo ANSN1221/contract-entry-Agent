@@ -126,9 +126,11 @@ pending ──→ running ──→ await_confirm ──→ done
 | 11-19 ~ 11-20 | 数据模型 + 迁移 + 状态机 + 单测 | 已完成（提前） |
 | 11-23 ~ 11-24 | 仓储层 + 任务 CRUD API + 集成测试 | 已完成（提前，11-19） |
 | 11-25 ~ 11-27 | 工具与主链路（条款检索 / 证据校验 / 抽取提示词 / 编排） | 全部完成：检索 + 抽取 + 校验 + 主图 + 执行器 |
+| 11-30 | 幂等键 + confirm_token + 乐观锁 | 已完成（幂等键在创建、token 在确认、乐观锁在两处） |
+| 12-01 | SSE 事件通道 + 断点续跑 | 待做 |
 | 后续 | 见项目计划书第八章 | — |
 
-已完成：`uv` 工程装配、路径依赖接入、应用工厂、统一错误体、request_id 中间件、限流、结构化日志、`/healthz` `/readyz`、SQLModel 三张表、Alembic 初始迁移、状态机白名单 + 乐观锁 + 审计链、任务仓储层、任务 CRUD API（幂等创建 / 分页 / 状态筛选 / 状态迁移）、Bearer 鉴权（短期签名 token + 静态 token）、101 条测试。
+已完成：`uv` 工程装配、路径依赖接入、应用工厂、统一错误体、request_id 中间件、限流、结构化日志、`/healthz` `/readyz`、SQLModel 三张表、Alembic 初始迁移、状态机白名单 + 乐观锁 + 审计链、任务仓储层、任务 CRUD API（幂等创建 / 分页 / 状态筛选 / 状态迁移）、Bearer 鉴权（短期签名 token + 静态 token）、工具白名单与参数强校验、条款检索工具、12 字段抽取与证据校验、LangGraph 主图、后台执行器、一次性 confirm_token 确认写库、192 条测试。
 
 ## 鉴权
 
@@ -163,6 +165,7 @@ token 是 `v1.<payload>.<签名>` 三段式，HS256 自签，不引 JWT 库：�
 | `GET /api/v1/tasks/{id}` | 详情 + 状态迁移审计时间线 |
 | `POST /api/v1/tasks/{id}/transitions` | 状态迁移：`{to_status, version, reason?, actor?}`；版本不符 409 `CONCURRENT_MODIFICATION`，非法迁移 409 `INVALID_TRANSITION` |
 | `POST /api/v1/tasks/{id}/run` | 执行任务（检索 → 抽取 → 校验 → 待确认）；`?wait=true` 同步等结果，`?resume=true` 从断点续跑 |
+| `POST /api/v1/tasks/{id}/confirm` | 人工确认：带一次性 `confirm_token` + 可选的人工修正字段，成功后转 `done` 并写库；二次提交 409 |
 
 ## 执行链路
 
@@ -178,7 +181,13 @@ LangGraph 主图：plan → retrieve → extract → verify ─┬→ decide
 runner 落库：字段结果整体覆盖写入 task_field
    ↓
 await_confirm（有低置信 / 未验证 / 校验不通过字段）  或  done（全部字段高置信且证据通过）
+   ↓（await_confirm 时发放一次性 confirm_token）
+POST /confirm（带 token，可附人工修正）
+   ↓
+done：字段落库，token 作废，审计记录 human:<subject>
 ```
+
+确认接口四道闸门，按「越便宜越先」排：任务存在 → 状态是 `await_confirm` → token 对且未用过 → 版本号对。任何一道不过都返回 409/403/404，不会写脏数据。
 
 可靠性边界：单任务超时 120s → `failed`（`TIMEOUT`）；图抛异常 → `failed`（`RUNNER_ERROR`）；抽不到任何字段 → `failed`（`EXTRACT_EMPTY`）；终态任务再执行 → 409 `TASK_TERMINAL`。
 
@@ -186,8 +195,14 @@ await_confirm（有低置信 / 未验证 / 校验不通过字段）  或  done�
 
 ```
 POST /run?wait=true
-→ status=await_confirm  rounds=1  tokens=1251+910
-→ review_keys=["effective_date"]   审计链：pending→running→await_confirm
+→ status=await_confirm  rounds=1  tokens=1251+910  confirm_token 已发放
+→ review_keys=["effective_date"]
+
+POST /confirm {confirm_token, fields:[{field_key:"effective_date", value:"2026-04-01"}]}
+→ status=done  version=3
+→ 审计链：pending→running→await_confirm→done
+→ 人工修正落库：value=2026-04-01, verified=true, verify_note=human_confirmed
+→ 二次提交同 token：409 TASK_NOT_AWAIT_CONFIRM
 ```
 
 ## 字段抽取与证据校验

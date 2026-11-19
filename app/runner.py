@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import asyncio
+import secrets
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -41,6 +42,7 @@ class RunOutcome:
     tokens: dict[str, int] = field(default_factory=dict)
     review_keys: list[str] = field(default_factory=list)
     unsupported: list[str] = field(default_factory=list)
+    confirm_token: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -52,6 +54,7 @@ class RunOutcome:
             "tokens": self.tokens,
             "review_keys": self.review_keys,
             "unsupported": self.unsupported,
+            "confirm_token": self.confirm_token,
         }
 
 
@@ -202,6 +205,15 @@ class TaskRunner:
             except InvalidTransition as exc:
                 log.warning("runner_invalid_transition", task_id=task_id, error=str(exc))
 
+            confirm_token = None
+            if task.status == TaskStatus.AWAIT_CONFIRM.value:
+                # 一次性凭证：进确认卡时发放，确认接口用掉即作废
+                if not task.confirm_token:
+                    task.confirm_token = secrets.token_urlsafe(18)
+                    session.add(task)
+                    session.flush()
+                confirm_token = task.confirm_token
+
             return RunOutcome(
                 task_id=task_id,
                 status=task.status,
@@ -211,6 +223,7 @@ class TaskRunner:
                 tokens=tokens,
                 review_keys=review_keys,
                 unsupported=unsupported,
+                confirm_token=confirm_token,
             )
 
     def _fail(self, task_id: str, code: str, message: str) -> RunOutcome:

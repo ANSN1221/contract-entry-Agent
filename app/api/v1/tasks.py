@@ -11,6 +11,8 @@ from app.errors import NotFound, ServiceUnavailable
 from app.models import Task, TaskStatus
 from app.repository import repository
 from app.schemas import (
+    ConfirmIn,
+    FieldOut,
     RunOut,
     TaskCreate,
     TaskDetail,
@@ -58,9 +60,11 @@ def get_task(task_id: str, session: SessionDep) -> TaskDetail:
     if task is None:
         raise NotFound("任务不存在", detail={"task_id": task_id})
     records = repository.list_transitions(session, task_id)
+    fields = repository.list_fields(session, task_id)
     return TaskDetail(
         **task.model_dump(),
         transitions=[TransitionOut.model_validate(record) for record in records],
+        fields=[FieldOut.model_validate(field) for field in fields],
     )
 
 
@@ -108,3 +112,24 @@ async def run_task(
     outcome = await runner.run_task(task_id, resume=resume)
     response.status_code = status.HTTP_200_OK
     return RunOut(**outcome.as_dict())
+
+
+@router.post("/{task_id}/confirm", response_model=TaskOut, summary="人工确认并写库")
+def confirm_task(
+    task_id: str,
+    payload: ConfirmIn,
+    session: SessionDep,
+    request: Request,
+) -> Task:
+    principal = getattr(request.state, "principal", None)
+    actor = f"human:{principal.subject}" if principal is not None else "human"
+
+    return repository.confirm(
+        session,
+        task_id=task_id,
+        confirm_token=payload.confirm_token,
+        updates=[(item.field_key, item.value) for item in payload.fields],
+        actor=actor,
+        version=payload.version,
+        request_id=getattr(request.state, "request_id", None),
+    )
