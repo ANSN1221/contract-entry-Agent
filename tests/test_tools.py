@@ -46,18 +46,18 @@ def fake_retriever(hits: list[ClauseHit], captured: dict | None = None):
 # ---------- 白名单 ----------
 
 
-def test_whitelist_contains_search_clauses() -> None:
-    assert tool_names() == ["search_clauses"]
+def test_whitelist_contents() -> None:
+    assert set(tool_names()) == {"search_clauses", "verify_extraction"}
 
 
 def test_tool_schema_is_llm_ready() -> None:
-    specs = list_tools()
-    assert len(specs) == 1
-    spec = specs[0]
-    assert spec["name"] == "search_clauses"
+    specs = {spec["name"]: spec for spec in list_tools()}
+    assert set(specs) == {"search_clauses", "verify_extraction"}
     # function calling 需要 JSON Schema 形状的 parameters
-    assert spec["parameters"]["type"] == "object"
-    assert "query" in spec["parameters"]["properties"]
+    for spec in specs.values():
+        assert spec["parameters"]["type"] == "object"
+        assert spec["parameters"]["properties"]
+        assert spec["description"]
 
 
 def test_unknown_tool_rejected() -> None:

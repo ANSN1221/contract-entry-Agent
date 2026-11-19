@@ -54,8 +54,9 @@ class ToolSpec:
 def _registry() -> dict[str, ToolSpec]:
     # 延迟导入：避免 app.tools 与具体工具模块循环依赖
     from app.tools.search_clauses import SPEC as search_spec
+    from app.tools.verify_extraction import SPEC as verify_spec
 
-    return {spec.name: spec for spec in (search_spec,)}
+    return {spec.name: spec for spec in (search_spec, verify_spec)}
 
 
 def list_tools() -> list[dict[str, Any]]:

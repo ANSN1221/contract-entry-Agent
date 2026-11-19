@@ -45,6 +45,8 @@ uv sync --extra dev
 | --- | --- |
 | 启动 | `uv run uvicorn app.main:app --reload` |
 | 签发短期 token | `uv run python scripts/issue_token.py --subject dev --ttl 3600` |
+| 生成合成合同样例 | `uv run python scripts/make_sample_contract.py` |
+| 跑真实模型链路测试 | `RUN_LIVE_LLM=1 uv run pytest tests/test_extract_live.py` |
 | 建库 / 升级到最新 | `uv run alembic upgrade head` |
 | 改完模型生成迁移 | `uv run alembic revision --autogenerate -m "描述"` |
 | 回退一步 | `uv run alembic downgrade -1` |
@@ -123,7 +125,7 @@ pending ──→ running ──→ await_confirm ──→ done
 | 11-18 | 仓库骨架 + uv 装配 + 空 FastAPI + 统一错误体 | 已完成 |
 | 11-19 ~ 11-20 | 数据模型 + 迁移 + 状态机 + 单测 | 已完成（提前） |
 | 11-23 ~ 11-24 | 仓储层 + 任务 CRUD API + 集成测试 | 已完成（提前，11-19） |
-| 11-25 ~ 11-27 | 工具与主链路（条款检索 / 证据校验 / 抽取提示词 / 编排） | 11-25 检索工具已完成 |
+| 11-25 ~ 11-27 | 工具与主链路（条款检索 / 证据校验 / 抽取提示词 / 编排） | 检索 + 抽取 + 校验已完成，编排待做 |
 | 后续 | 见项目计划书第八章 | — |
 
 已完成：`uv` 工程装配、路径依赖接入、应用工厂、统一错误体、request_id 中间件、限流、结构化日志、`/healthz` `/readyz`、SQLModel 三张表、Alembic 初始迁移、状态机白名单 + 乐观锁 + 审计链、任务仓储层、任务 CRUD API（幂等创建 / 分页 / 状态筛选 / 状态迁移）、Bearer 鉴权（短期签名 token + 静态 token）、101 条测试。
@@ -160,6 +162,30 @@ token 是 `v1.<payload>.<签名>` 三段式，HS256 自签，不引 JWT 库：�
 | `GET /api/v1/tasks` | 分页列表：`offset`/`limit`（默认 0/20，上限 100）+ `status` 筛选，信封 `{items, total, offset, limit}` |
 | `GET /api/v1/tasks/{id}` | 详情 + 状态迁移审计时间线 |
 | `POST /api/v1/tasks/{id}/transitions` | 状态迁移：`{to_status, version, reason?, actor?}`；版本不符 409 `CONCURRENT_MODIFICATION`，非法迁移 409 `INVALID_TRANSITION` |
+
+## 字段抽取与证据校验
+
+一条链路：**多组关键词召回条款 → 一次模型调用抽 12 个字段 → 逐字段核证据**。
+
+| 环节 | 关键约束 |
+| --- | --- |
+| 召回 | 多组查询去重后取前 16 条，控制上下文体积 |
+| 抽取 | 每个非空字段必须给 `clause_id` + 原文 `quote`，否则置信度压到 0.3 并标红 |
+| 兜底 | 未知字段丢弃、置信度越界夹紧、出处不在召回范围内则清空证据 |
+| 校验 | 规则层（归一化后包含判断）优先，未命中再交模型判定；判不了返回 `unverified` 而非通过 |
+
+实测（合成合同 `DOC901`，13 条召回）：
+
+```
+填充 11/12    低置信 1    token 1251+914
+total_amount        1280000.00              0.95  DOC901-C0003  → supported (rule)
+deposit_ratio       5                       0.95  DOC901-C0008  → supported (llm，原文「百分之五」)
+party_a             江南智造科技有限公司        0.95  DOC901-C0001  → supported (rule)
+effective_date      -                       0.00  -             → 待确认（合同里确实没写生效日期）
+```
+
+关键点：`effective_date` 没抽出来是**正确行为**——合同只写了签订日期与履行期限起点，
+模型没有拿「2026-04-01 开始履行」去猜生效日期。这一条比抽对 11 个字段更能说明约束生效。
 
 ## 设计约定
 

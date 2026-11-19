@@ -29,11 +29,18 @@ class Settings(BaseSettings):
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-chat"
+    llm_timeout_seconds: float = 60.0
+    llm_max_retries: int = 3
+    llm_retry_base_delay: float = 0.5
 
     # Embedding：硅基流动，OpenAI 兼容协议
     siliconflow_api_key: str = ""
     siliconflow_base_url: str = "https://api.siliconflow.cn/v1"
     embedding_model: str = "BAAI/bge-m3"
+
+    # 抽取与校验
+    extract_confidence_threshold: float = 0.7  # 低于此值进确认卡标红
+    verify_with_llm: bool = True  # 规则层没比对出来时，是否再让模型判一次
 
     # 鉴权：三项都不为空才算开启。dev 留空放行，prod 留空直接拒绝（fail closed）
     api_token: str = ""  # 长期静态 token，开发/内网用

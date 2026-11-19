@@ -52,6 +52,23 @@ def _retriever(settings: Settings | None = None):  # noqa: ANN202
     return get_retriever()
 
 
+def get_clause(clause_id: str) -> ClauseHit | None:
+    """按 ID 取条款原文。验证抽取结果时要拿原文比对，不能只靠搜索摘要。"""
+    retriever = _retriever()
+    records = getattr(retriever, "records", None) or {}
+    record = records.get(clause_id)
+    if record is None:
+        return None
+    return ClauseHit(
+        clause_id=clause_id,
+        text=record.text,
+        citation_label=record.citation_label,
+        page_start=record.page_start,
+        page_end=record.page_end,
+        score=1.0,
+    )
+
+
 def search_clauses(
     query: str,
     top_k: int = 8,
