@@ -16,6 +16,8 @@ from app.config import Settings, get_settings
 from app.errors import register_exception_handlers
 from app.log import configure_logging, get_logger
 from app.middleware import RateLimitMiddleware, RequestContextMiddleware
+from app.runner import build_runner
+from app.store import get_database
 
 log = get_logger("app.main")
 
@@ -32,7 +34,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             version=settings.version,
             env=settings.env,
         )
-        yield
+        # 调度器随应用起停：任务状态在库里，所以进程重启不会丢任务
+        runner = build_runner(settings, get_database())
+        app.state.runner = runner
+        await runner.start()
+        try:
+            yield
+        finally:
+            await runner.stop()
         log.info("app_stopped")
 
     app = FastAPI(

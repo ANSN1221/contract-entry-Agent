@@ -125,7 +125,7 @@ pending ──→ running ──→ await_confirm ──→ done
 | 11-18 | 仓库骨架 + uv 装配 + 空 FastAPI + 统一错误体 | 已完成 |
 | 11-19 ~ 11-20 | 数据模型 + 迁移 + 状态机 + 单测 | 已完成（提前） |
 | 11-23 ~ 11-24 | 仓储层 + 任务 CRUD API + 集成测试 | 已完成（提前，11-19） |
-| 11-25 ~ 11-27 | 工具与主链路（条款检索 / 证据校验 / 抽取提示词 / 编排） | 检索 + 抽取 + 校验已完成，编排待做 |
+| 11-25 ~ 11-27 | 工具与主链路（条款检索 / 证据校验 / 抽取提示词 / 编排） | 全部完成：检索 + 抽取 + 校验 + 主图 + 执行器 |
 | 后续 | 见项目计划书第八章 | — |
 
 已完成：`uv` 工程装配、路径依赖接入、应用工厂、统一错误体、request_id 中间件、限流、结构化日志、`/healthz` `/readyz`、SQLModel 三张表、Alembic 初始迁移、状态机白名单 + 乐观锁 + 审计链、任务仓储层、任务 CRUD API（幂等创建 / 分页 / 状态筛选 / 状态迁移）、Bearer 鉴权（短期签名 token + 静态 token）、101 条测试。
@@ -162,6 +162,33 @@ token 是 `v1.<payload>.<签名>` 三段式，HS256 自签，不引 JWT 库：�
 | `GET /api/v1/tasks` | 分页列表：`offset`/`limit`（默认 0/20，上限 100）+ `status` 筛选，信封 `{items, total, offset, limit}` |
 | `GET /api/v1/tasks/{id}` | 详情 + 状态迁移审计时间线 |
 | `POST /api/v1/tasks/{id}/transitions` | 状态迁移：`{to_status, version, reason?, actor?}`；版本不符 409 `CONCURRENT_MODIFICATION`，非法迁移 409 `INVALID_TRANSITION` |
+| `POST /api/v1/tasks/{id}/run` | 执行任务（检索 → 抽取 → 校验 → 待确认）；`?wait=true` 同步等结果，`?resume=true` 从断点续跑 |
+
+## 执行链路
+
+```
+POST /run
+   ↓
+runner 领取（pending→running，乐观锁 + 审计）
+   ↓
+LangGraph 主图：plan → retrieve → extract → verify ─┬→ decide
+                    ↑                              │
+                    └──── retry（3 个以上字段校验失败才重抽，最多 2 轮）
+   ↓
+runner 落库：字段结果整体覆盖写入 task_field
+   ↓
+await_confirm（有低置信 / 未验证 / 校验不通过字段）  或  done（全部字段高置信且证据通过）
+```
+
+可靠性边界：单任务超时 120s → `failed`（`TIMEOUT`）；图抛异常 → `failed`（`RUNNER_ERROR`）；抽不到任何字段 → `failed`（`EXTRACT_EMPTY`）；终态任务再执行 → 409 `TASK_TERMINAL`。
+
+实测（合成合同，真实模型 + 真实索引）：
+
+```
+POST /run?wait=true
+→ status=await_confirm  rounds=1  tokens=1251+910
+→ review_keys=["effective_date"]   审计链：pending→running→await_confirm
+```
 
 ## 字段抽取与证据校验
 

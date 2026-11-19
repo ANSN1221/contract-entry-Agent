@@ -7,10 +7,18 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
 from sqlmodel import Session
 
-from app.errors import NotFound
+from app.errors import NotFound, ServiceUnavailable
 from app.models import Task, TaskStatus
 from app.repository import repository
-from app.schemas import TaskCreate, TaskDetail, TaskListOut, TaskOut, TransitionIn, TransitionOut
+from app.schemas import (
+    RunOut,
+    TaskCreate,
+    TaskDetail,
+    TaskListOut,
+    TaskOut,
+    TransitionIn,
+    TransitionOut,
+)
 from app.store import get_session
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -69,3 +77,34 @@ def transition_task(
         actor=payload.actor,
         request_id=getattr(request.state, "request_id", None),
     )
+
+
+@router.post(
+    "/{task_id}/run",
+    response_model=RunOut,
+    summary="执行任务（抽取 → 校验 → 待确认）",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def run_task(
+    task_id: str,
+    request: Request,
+    response: Response,
+    session: SessionDep,
+    wait: Annotated[bool, Query(description="true 则同步等待结果，false 只入队")] = False,
+    resume: Annotated[bool, Query(description="true 则从上次断点续跑")] = False,
+) -> RunOut:
+    task = repository.get(session, task_id)
+    if task is None:
+        raise NotFound("任务不存在", detail={"task_id": task_id})
+
+    runner = getattr(request.app.state, "runner", None)
+    if runner is None:  # 极端情况：未走 lifespan（例如裸调用 create_app）
+        raise ServiceUnavailable("执行器未启动", detail={"hint": "应用需通过 lifespan 启动"})
+
+    if not wait:
+        await runner.submit(task_id)
+        return RunOut(task_id=task_id, status="queued")
+
+    outcome = await runner.run_task(task_id, resume=resume)
+    response.status_code = status.HTTP_200_OK
+    return RunOut(**outcome.as_dict())

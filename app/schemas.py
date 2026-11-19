@@ -64,3 +64,29 @@ class TransitionIn(BaseModel):
     version: int = Field(ge=0)
     reason: str | None = Field(default=None, max_length=200)
     actor: str = Field(default="system", min_length=1, max_length=40)
+
+
+class RunOut(BaseModel):
+    """执行结果。`review_keys` 是需要在确认卡上标红的字段。"""
+
+    task_id: str
+    status: str
+    outcome: str = ""
+    rounds: int = 0
+    error: str = ""
+    tokens: dict[str, int] = Field(default_factory=dict)
+    review_keys: list[str] = Field(default_factory=list)
+    unsupported: list[str] = Field(default_factory=list)
+
+
+class FieldOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    field_key: str
+    value: str | None
+    confidence: float
+    needs_review: bool
+    source_clause_id: str | None
+    evidence: str | None
+    verified: bool | None
+    verify_note: str | None

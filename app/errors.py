@@ -102,6 +102,12 @@ class InternalError(AppError):
     message = "服务内部错误"
 
 
+class ServiceUnavailable(AppError):
+    status_code = 503
+    code = "SERVICE_UNAVAILABLE"
+    message = "服务暂不可用"
+
+
 def error_body(
     *,
     code: str,

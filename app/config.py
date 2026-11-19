@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     extract_confidence_threshold: float = 0.7  # 低于此值进确认卡标红
     verify_with_llm: bool = True  # 规则层没比对出来时，是否再让模型判一次
 
+    # 后台执行器
+    runner_workers: int = 2  # 0 表示不启动 worker（测试用）
+    runner_timeout_seconds: float = 120.0  # 单任务执行上限
+    checkpoint_path: str = "data/checkpoints.db"  # LangGraph 断点存储
+
     # 鉴权：三项都不为空才算开启。dev 留空放行，prod 留空直接拒绝（fail closed）
     api_token: str = ""  # 长期静态 token，开发/内网用
     api_token_secret: str = ""  # 签名密钥，配了才能签发短期 token
