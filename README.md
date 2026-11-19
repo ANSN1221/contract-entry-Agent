@@ -48,6 +48,8 @@ uv sync --extra dev
 | 生成合成合同样例 | `uv run python scripts/make_sample_contract.py` |
 | 跑真实模型链路测试 | `RUN_LIVE_LLM=1 uv run pytest tests/test_extract_live.py` |
 | 跑评测 | `uv run python scripts/evaluate.py` |
+| **本机演示（一条命令）** | `uv run python scripts/demo.py` |
+| 演示前清空数据 | `uv run python scripts/demo.py --fresh` |
 | 前端开发 | `cd frontend && npm run dev`（代理到 8000） |
 | 前端构建 | `cd frontend && npm run build`（产物由后端托管） |
 | 建库 / 升级到最新 | `uv run alembic upgrade head` |
@@ -84,6 +86,64 @@ alembic.ini            # 迁移工具配置（连接串由 env.py 从 config 注
 docs/                  # 文件名中英对照等说明文档
 tests/                 # 状态机单测 / 模型约束 / API 契约（随排期补）
 ```
+
+## 架构
+
+```
+                    ┌──────────────────────────────┐
+  浏览器 ──HTTP──→  │  FastAPI                     │
+   (React)          │  ├─ 鉴权（Bearer / 签名 token）│
+                    │  ├─ 限流 + request_id         │
+                    │  └─ /api/v1 路由组            │
+                    └──────┬───────────────┬───────┘
+                           │               │
+                  写任务/查详情        提交确认
+                           │               │
+                    ┌──────▼───────────────▼───────┐
+                    │  Repository（乐观锁 + 审计）   │
+                    └──────────────┬───────────────┘
+                                   │ 状态迁移 + 事件同事务
+                    ┌──────────────▼───────────────┐
+                    │  SQLite / PostgreSQL          │
+                    │  task · task_field            │
+                    │  task_transition · event      │
+                    └──────────────▲───────────────┘
+                                   │
+   POST /run ──→ 后台 Runner（asyncio 队列，超时/死信）
+                                   │
+                    ┌──────────────┴───────────────┐
+                    │  LangGraph 主图               │
+                    │  plan→retrieve→extract→       │
+                    │  verify ⇄ retry→decide        │
+                    └──────┬──────────────┬────────┘
+                           │              │
+                  条款检索（项目一）    抽取/校验（DeepSeek）
+                  双路召回 + 重排      强制引用 + 三态结论
+```
+
+数据流只往一个方向走：**模型产出草稿，人签字，才写库**。Runner 与请求解耦，浏览器关掉任务照跑；状态全在库里，进程重启不丢任务（checkpointer 存断点）。
+
+## 本机演示
+
+```bash
+uv run python scripts/demo.py
+```
+
+启动器做四件事，任何一项缺失都会打印该跑什么命令：
+
+1. 环境自检（两个密钥、项目一索引、前端产物）
+2. 库没迁移就自动 `alembic upgrade head`
+3. 签发 12 小时 token 并打印（粘到页面右上角）
+4. 起服务：前端与 API 同端口
+
+| 参数 | 作用 |
+| --- | --- |
+| `--fresh` | 清空本地 SQLite 演示库，从零开始 |
+| `--no-auth` | 关闭鉴权，演示时不用粘 token |
+| `--port 8080` | 换端口 |
+| `--ttl-hours 2` | token 有效期 |
+
+演示分镜与讲解要点见 [docs/演示脚本.md](docs/演示脚本.md)。
 
 ## 界面
 
@@ -144,7 +204,8 @@ pending ──→ running ──→ await_confirm ──→ done
 | 11-30 | 幂等键 + confirm_token + 乐观锁 | 已完成（幂等键在创建、token 在确认、乐观锁在两处） |
 | 12-01 | SSE 事件通道 + 断点续跑 | 已完成 |
 | 12-02 ~ 12-04 | 异常分支细化 + 指标 + 评测 | 已完成 |
-| 12-07 | 前端薄壳 + 部署 | 前端已完成，部署待定 |
+| 12-07 | 前端薄壳 + 部署 | 已完成（本机单进程单端口） |
+| 12-08 ~ 12-09 | README + 演示脚本 + 录屏 | README 与演示脚本已完成，录屏待录 |
 | 后续 | 见项目计划书第八章 | — |
 
 已完成：`uv` 工程装配、路径依赖接入、应用工厂、统一错误体、request_id 中间件、限流、结构化日志、`/healthz` `/readyz`、SQLModel 四张表、Alembic 迁移、状态机白名单 + 乐观锁 + 审计链、任务仓储层、任务 CRUD API、Bearer 鉴权、工具白名单与参数强校验、条款检索工具、12 字段抽取与证据校验、LangGraph 主图、后台执行器、一次性 confirm_token 确认写库、SSE 事件流、SQLite 持久化断点续跑、Prometheus 指标、评测脚本、死信上限、React 前端（列表 / 字段 / 确认卡 / SSE 时间线）、238 条测试。
@@ -307,6 +368,23 @@ effective_date      -                       0.00  -             → 待确认（
 - **依赖隔离**：`contract_qa` 的内部数据结构不进入业务层，一律经 `app/adapters/` 转换成本项目类型。
 - **鉴权挂在路由组上**：`include_router(..., dependencies=[Depends(require_principal)])`，一次挂载覆盖所有 v1 接口，新增路由不用逐个记得加。
 - **工具白名单**：`app/tools/` 里 `TOOL_WHITELIST` 之外的工具名一律拒绝；每个工具一个 pydantic 参数模型，`extra="forbid"`，模型多塞字段直接报错而不是猜。
+
+## 验收清单
+
+| 能力 | 验证方式 |
+| --- | --- |
+| 抽取 12 字段并带出处 | `uv run python scripts/evaluate.py` → 字段 12/12、引用 100% |
+| 不编造（不可答问题） | 同上 → 不可答 8/8；合同没写生效日期时输出 null 而非猜测 |
+| 证据链可核对 | 每个字段 `clause_id` + `quote` + `verify_note` 三件套，规则层优先、模型兜底 |
+| 人工确认幂等 | 一次性 `confirm_token`，二次提交 409 `CONFIRM_ALREADY_USED` / `TASK_NOT_AWAIT_CONFIRM` |
+| 并发安全 | `Task.version` 乐观锁；陈旧版本 409 `CONCURRENT_MODIFICATION` |
+| 状态机合法性 | 白名单迁移，非法迁移 409 `INVALID_TRANSITION`；审计链可查 |
+| 执行可靠性 | 120s 超时、3 次上限进死信、异常转 `RUNNER_ERROR` |
+| 断点续跑 | 换连接模拟重启，图从最后成功节点继续 |
+| 实时进度 | SSE 事件流，`Last-Event-ID` 断线补发 |
+| 可观测 | `/metrics` Prometheus 文本 + `/api/v1/metrics` JSON |
+| 鉴权 | 签名 token 过期/篡改/错密钥全部 401；生产未配置凭证则 fail closed |
+| 回归 | `uv run pytest` → 238 条 |
 
 ## 与项目一的关系
 
