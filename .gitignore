@@ -43,6 +43,13 @@ Thumbs.db
 /bagou_manual.md
 /build_manual_pdf.py
 /面试八股速查手册-*.pdf
+/.interview_build/
+/审计报告/
+/Contract-qa-RAG/
+/contract-entry-Agent/
+/*.docx
+/*.pdf
+/*.png
 
 # 本地工作目录（Agent 记忆、计划快照等）
 .workbuddy/
