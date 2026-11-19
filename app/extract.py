@@ -92,11 +92,17 @@ def collect_clauses(
     queries: list[str],
     *,
     top_k: int = 6,
+    doc_ids: list[str] | None = None,
 ) -> list[ClauseHit]:
-    """多组关键词召回后按 clause_id 去重，控制总条数，避免把上下文塞爆。"""
+    """多组关键词召回后按 clause_id 去重，控制总条数，避免把上下文塞爆。
+
+    `doc_ids` 透传给检索器：多合同语料下必须限定在当前合同内，
+    否则每组查询的前几条会被别的合同占满（实测目标合同只召回 1 条）。
+    """
     seen: dict[str, ClauseHit] = {}
+    extra = {"doc_ids": doc_ids} if doc_ids else {}
     for query in queries:
-        for hit in retriever(query, top_k=top_k):
+        for hit in retriever(query, top_k=top_k, **extra):
             seen.setdefault(hit.clause_id, hit)
     ordered = sorted(seen.values(), key=lambda h: (h.page_start, h.clause_id))
     return ordered[:MAX_CLAUSES]

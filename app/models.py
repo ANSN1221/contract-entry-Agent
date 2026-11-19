@@ -104,6 +104,8 @@ class Task(SQLModel, table=True):
     original_filename: str = Field(sa_column=Column(String(255), nullable=False))
     file_sha256: str = Field(sa_column=Column(String(64), nullable=False, index=True))
     file_path: str = Field(sa_column=Column(String(512), nullable=False))
+    # 对应检索库里的文档 ID（如 DOC012）。多合同语料下靠它把召回限定在本合同内。
+    doc_id: str | None = Field(default=None, sa_column=Column(String(16), nullable=True))
 
     # 乐观锁版本号，每次状态迁移 +1
     version: int = Field(default=0, sa_column=Column(Integer, nullable=False, default=0))

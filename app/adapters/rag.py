@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from app.config import Settings
@@ -75,8 +76,12 @@ def search_clauses(
     *,
     candidates: int = 50,
     use_rerank: bool | None = None,
+    doc_ids: Sequence[str] | None = None,
 ) -> list[ClauseHit]:
     """双路召回（BM25 + 向量，RRF 融合）后返回条款。
+
+    `doc_ids` 把召回限定在指定文档内：一个任务只处理一份合同，
+    不限定就会把别的合同条款混进来（多合同语料实测召回率会掉到个位数）。
 
     索引缺失 / 向量库未建的错误原样抛出：这是部署问题，不该在业务层被吞掉。
     """
@@ -85,7 +90,13 @@ def search_clauses(
 
     retriever = _retriever()
     try:
-        hits = retriever.search(query, top_k=top_k, candidates=candidates, use_rerank=use_rerank)
+        hits = retriever.search(
+            query,
+            top_k=top_k,
+            candidates=candidates,
+            use_rerank=use_rerank,
+            doc_ids=doc_ids,
+        )
     except FileNotFoundError as exc:
         raise RagUnavailable(f"{exc}（需先在 Contract-qa-RAG 里构建索引）") from exc
 

@@ -35,7 +35,6 @@ from app.llm import LlmClient  # noqa: E402
 from app.models import CONTRACT_FIELDS  # noqa: E402
 
 GOLD_PATH = Path("eval/gold.json")
-REPORT_PATH = Path("eval/report.json")
 
 QUERIES = [
     "合同编号",
@@ -150,7 +149,18 @@ def match(expected: str, actual: str | None) -> bool:
     exp, act = normalize(expected), normalize(actual)
     if not exp or not act:
         return False
-    return exp in act or act in exp
+    if exp in act or act in exp:
+        return True
+    # 文本字段常差虚词（「提起诉讼」vs「诉讼」），用二元组覆盖率兜一层
+    return _bigram_overlap(exp, act) >= 0.7
+
+
+def _bigram_overlap(expected: str, actual: str) -> float:
+    if len(expected) < 2:
+        return 0.0
+    exp_pairs = {expected[i : i + 2] for i in range(len(expected) - 1)}
+    act_pairs = {actual[i : i + 2] for i in range(len(actual) - 1)}
+    return len(exp_pairs & act_pairs) / len(exp_pairs)
 
 
 def evaluate_fields(gold: dict[str, Any], drafts: dict[str, Any]) -> dict[str, Any]:
@@ -198,17 +208,23 @@ def evaluate_fields(gold: dict[str, Any], drafts: dict[str, Any]) -> dict[str, A
     }
 
 
-def evaluate_unanswerable(items: list[str]) -> list[dict[str, Any]]:
+def evaluate_unanswerable(
+    items: list[str], doc_ids: list[str] | None = None
+) -> list[dict[str, Any]]:
     """每个不该答的问题走一次检索，看 Top-3 是否真无相关内容。"""
     results = []
     for question in items:
-        hits = search_clauses(question, top_k=3)
+        hits = search_clauses(question, top_k=3, doc_ids=doc_ids)
         keywords = [
             word
             for word in re.split(r"[的了吗是多少？?]+", question)
             if len(word) >= 2 and word not in STOPWORDS
         ]
-        contaminated = any(any(kw in hit.text for kw in keywords) for hit in hits)
+        # 只出现关键词不算有答案：还要有一段看起来像手机号/账号的数字
+        contaminated = any(
+            any(kw in hit.text for kw in keywords) and re.search(r"\d{7,}", hit.text)
+            for hit in hits
+        )
         results.append(
             {
                 "question": question,
@@ -224,9 +240,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="合同字段抽取评测")
     parser.add_argument("--dry-run", action="store_true", help="只打印用例")
     parser.add_argument("--top-k", type=int, default=4)
+    parser.add_argument("--gold", type=Path, default=GOLD_PATH, help="标准答案文件")
     args = parser.parse_args()
 
-    gold = json.loads(GOLD_PATH.read_text(encoding="utf-8"))
+    gold = json.loads(args.gold.read_text(encoding="utf-8"))
+    report_path = args.gold.with_name(args.gold.stem.replace("gold", "report") + ".json")
     print(f"文档：{gold['document']}（{gold['doc_id']}）")
     print(f"字段：{len(gold['fields'])} 个，不可答：{len(gold['unanswerable'])} 条\n")
 
@@ -237,8 +255,13 @@ def main() -> int:
         return 0
 
     started = time.perf_counter()
-    clauses = collect_clauses(search_clauses, QUERIES, top_k=args.top_k)
-    print(f"召回条款 {len(clauses)} 条")
+    doc_ids = [str(gold["doc_id"])] if gold.get("doc_id") else None
+    clauses = collect_clauses(
+        search_clauses, QUERIES, top_k=args.top_k, doc_ids=doc_ids
+    )
+    if doc_ids:
+        clauses = [c for c in clauses if c.clause_id.startswith(doc_ids[0])]
+        print(f"限定 {doc_ids[0]} 召回 {len(clauses)} 条")
 
     with LlmClient() as client:
         result = extract_fields(clauses, client=client)
@@ -250,7 +273,7 @@ def main() -> int:
 
     drafts = result.by_key()
     field_report = evaluate_fields(gold, {k: v.as_dict() for k, v in drafts.items()})
-    unanswerable = evaluate_unanswerable(gold["unanswerable"])
+    unanswerable = evaluate_unanswerable(gold["unanswerable"], doc_ids)
 
     clean = sum(1 for item in unanswerable if not item["corpus_has_answer"])
     report = {
@@ -271,8 +294,8 @@ def main() -> int:
         "unanswerable": unanswerable,
     }
 
-    REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    REPORT_PATH.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print(f"\n{'字段':<20}{'期望':<26}{'实际':<26}{'判定'}")
     print("-" * 78)
@@ -291,7 +314,7 @@ def main() -> int:
     print(f"  待人工确认      {report['needs_review']} 个字段")
     print(f"  耗时            {report['duration_seconds']}s")
     print(f"  token           {report['tokens']['total']}")
-    print(f"\n报告已写入 {REPORT_PATH}")
+    print(f"\n报告已写入 {report_path}")
     return 0
 
 

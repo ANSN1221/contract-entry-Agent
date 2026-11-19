@@ -147,6 +147,7 @@ class TaskRunner:
 
     async def run_task(self, task_id: str, *, resume: bool = False) -> RunOutcome:
         graph = await self._ensure_graph()
+        doc_ids = self._doc_ids_for(task_id)
         if self._begin(task_id, resume=resume) == DEAD:
             return RunOutcome(
                 task_id=task_id,
@@ -158,7 +159,7 @@ class TaskRunner:
         try:
             result = await asyncio.wait_for(
                 graph.ainvoke(
-                    {"task_id": task_id} if resume else _initial(task_id),
+                    {"task_id": task_id} if resume else _initial(task_id, doc_ids=doc_ids),
                     config=config,
                 ),
                 timeout=self.settings.runner_timeout_seconds,
@@ -174,6 +175,13 @@ class TaskRunner:
         return self._finish(task_id, result)
 
     # ---------- 落库 ----------
+
+    def _doc_ids_for(self, task_id: str) -> list[str] | None:
+        """任务绑定的文档 ID → 召回范围。没绑定就全库检索（单合同场景）。"""
+        with self.database.session() as session:
+            task = session.get(Task, task_id)
+            doc_id = task.doc_id if task else None
+        return [doc_id] if doc_id else None
 
     def _begin(self, task_id: str, *, resume: bool) -> str | None:
         with self.database.session() as session:
@@ -331,10 +339,10 @@ class TaskRunner:
             return RunOutcome(task_id=task_id, status=task.status, error=message)
 
 
-def _initial(task_id: str) -> dict[str, Any]:
+def _initial(task_id: str, *, doc_ids: list[str] | None = None) -> dict[str, Any]:
     from app.graph import initial_state
 
-    return dict(initial_state(task_id))
+    return dict(initial_state(task_id, doc_ids=doc_ids))
 
 
 def _emit_status_event(

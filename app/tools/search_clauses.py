@@ -36,6 +36,11 @@ class SearchClausesArgs(BaseModel):
     query: str = Field(min_length=1, max_length=200, description="检索词，保留合同原文术语效果最好")
     top_k: int = Field(default=8, ge=1, le=MAX_TOP_K, description="返回条款条数")
     use_rerank: bool | None = Field(default=None, description="是否启用重排；None 表示跟随配置")
+    doc_ids: list[str] | None = Field(
+        default=None,
+        max_length=10,
+        description='限定召回文档，如 ["DOC012"]；不传则全库检索',
+    )
 
     @field_validator("query")
     @classmethod
@@ -104,6 +109,7 @@ def handle(args: SearchClausesArgs, context: ToolContext) -> dict[str, Any]:
             args.query,
             top_k=args.top_k,
             use_rerank=args.use_rerank,
+            doc_ids=args.doc_ids,
         )
     except RagUnavailable as exc:
         # 缺包 / 缺索引属于部署问题：不可重试，直接转 blocked 更合适
@@ -116,6 +122,7 @@ def handle(args: SearchClausesArgs, context: ToolContext) -> dict[str, Any]:
 
     return {
         "query": args.query,
+        "doc_ids": args.doc_ids,
         "count": len(hits),
         "items": [to_payload(hit) for hit in hits],
         "metrics": metrics.as_dict(),

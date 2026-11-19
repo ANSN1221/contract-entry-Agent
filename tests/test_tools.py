@@ -35,9 +35,18 @@ def make_hit(
 
 
 def fake_retriever(hits: list[ClauseHit], captured: dict | None = None):
-    def _search(query: str, top_k: int = 8, *, use_rerank: bool | None = None, **_: object):
+    def _search(
+        query: str,
+        top_k: int = 8,
+        *,
+        use_rerank: bool | None = None,
+        doc_ids: list[str] | None = None,
+        **_: object,
+    ):
         if captured is not None:
-            captured.update({"query": query, "top_k": top_k, "use_rerank": use_rerank})
+            captured.update(
+                {"query": query, "top_k": top_k, "use_rerank": use_rerank, "doc_ids": doc_ids}
+            )
         return hits[:top_k]
 
     return _search
@@ -226,3 +235,42 @@ def test_default_retriever_translates_missing_package(monkeypatch) -> None:  # n
     with pytest.raises(ToolError) as exc:
         run_tool("search_clauses", {"query": "付款"})
     assert exc.value.code == "RAG_UNAVAILABLE"
+
+
+# ---------- 文档范围限定 ----------
+
+
+def test_doc_ids_passed_to_retriever() -> None:
+    """多合同语料下必须把召回限定在本合同内，参数要原样传下去。"""
+    captured: dict = {}
+    run_tool(
+        "search_clauses",
+        {"query": "合同总价", "doc_ids": ["DOC012"]},
+        context=ToolContext(retriever=fake_retriever([make_hit()], captured)),
+    )
+    assert captured["doc_ids"] == ["DOC012"]
+
+
+def test_doc_ids_omitted_when_not_given() -> None:
+    captured: dict = {}
+    run_tool(
+        "search_clauses",
+        {"query": "合同总价"},
+        context=ToolContext(retriever=fake_retriever([], captured)),
+    )
+    assert "doc_ids" not in captured or captured["doc_ids"] is None
+
+
+def test_too_many_doc_ids_rejected() -> None:
+    with pytest.raises(ToolError) as exc:
+        run_tool("search_clauses", {"query": "x", "doc_ids": [f"D{i}" for i in range(11)]})
+    assert exc.value.code == "INVALID_ARGS"
+
+
+def test_result_echoes_doc_scope() -> None:
+    result = run_tool(
+        "search_clauses",
+        {"query": "付款", "doc_ids": ["DOC004"]},
+        context=ToolContext(retriever=fake_retriever([make_hit()])),
+    )
+    assert result["doc_ids"] == ["DOC004"]

@@ -1,0 +1,27 @@
+{
+  "document": "doc12_beijing_pinggu_highway_supervision_contract.pdf",
+  "doc_id": "DOC012",
+  "note": "真实公开采购合同（北京市交通委员会平谷公路分局监理合同）。标注口径：原文没写的填 null，不做推断；「缺陷责任期」视为质保期。",
+  "fields": {
+    "contract_no": { "expected": null, "clause": null },
+    "party_a": { "expected": "北京市交通委员会平谷公路分局", "clause": "DOC012-C0001-1" },
+    "party_b": { "expected": "北京中城建建设管理有限公司", "clause": "DOC012-C0001-1" },
+    "total_amount": { "expected": "354782", "clause": "DOC012-C0001-2" },
+    "signed_date": { "expected": "2024-06-06", "clause": "DOC012-C0001-4" },
+    "effective_date": { "expected": null, "clause": null },
+    "performance_period": { "expected": "425 日历天", "clause": "DOC012-C0001-3" },
+    "payment_terms": { "expected": "签订后 14 天内预付 30%", "clause": "DOC012-C0001-2" },
+    "breach_liability": { "expected": "违约造成安全事故自行担责并赔偿损失", "clause": "DOC012-C0007-4" },
+    "dispute_resolution": { "expected": "发包人所在地人民法院诉讼", "clause": "DOC012-C0001-3" },
+    "deposit_ratio": { "expected": null, "clause": null },
+    "warranty_period": { "expected": "365 日历天（缺陷责任期）", "clause": "DOC012-C0001-3" }
+  },
+  "unanswerable": [
+    "总监理工程师的手机号码",
+    "乙方的开户银行账号",
+    "委托人的统一社会信用代码",
+    "项目施工人员的社保缴纳人数",
+    "监理人的注册资本",
+    "合同印花税税率"
+  ]
+}

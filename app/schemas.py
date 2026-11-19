@@ -16,6 +16,9 @@ class TaskCreate(BaseModel):
     original_filename: str = Field(min_length=1, max_length=255)
     file_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     file_path: str = Field(min_length=1, max_length=512)
+    doc_id: str | None = Field(
+        default=None, max_length=16, description="检索库里的文档 ID，如 DOC012"
+    )
 
 
 class TaskOut(BaseModel):

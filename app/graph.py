@@ -52,6 +52,7 @@ MAX_ROUNDS_DEFAULT = 2
 
 class ExtractionState(TypedDict, total=False):
     task_id: str
+    doc_ids: list[str]  # 限定召回范围：一个任务只处理一份合同
     queries: list[str]
     clauses: list[dict[str, str]]  # [{clause_id, text}]
     drafts: list[dict[str, Any]]
@@ -86,7 +87,12 @@ def _plan(state: ExtractionState) -> ExtractionState:
 
 
 def _retrieve(state: ExtractionState, deps: GraphDeps) -> ExtractionState:
-    clauses = collect_clauses(deps.retriever, state.get("queries", []), top_k=4)
+    clauses = collect_clauses(
+        deps.retriever,
+        state.get("queries", []),
+        top_k=4,
+        doc_ids=state.get("doc_ids") or None,
+    )
     return {
         "clauses": [{"clause_id": c.clause_id, "text": c.text} for c in clauses],
     }
@@ -223,9 +229,15 @@ async def make_async_checkpointer(db_path: str) -> tuple[Any, Any]:
         return MemorySaver(), None
 
 
-def initial_state(task_id: str, *, max_rounds: int = MAX_ROUNDS_DEFAULT) -> ExtractionState:
+def initial_state(
+    task_id: str,
+    *,
+    doc_ids: list[str] | None = None,
+    max_rounds: int = MAX_ROUNDS_DEFAULT,
+) -> ExtractionState:
     return {
         "task_id": task_id,
+        "doc_ids": doc_ids or [],
         "queries": [],
         "clauses": [],
         "drafts": [],

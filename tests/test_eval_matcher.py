@@ -63,3 +63,15 @@ def test_numbers_picks_decimals_and_integers() -> None:
 
 def test_normalize_strips_punctuation() -> None:
     assert normalize("甲方：某某 公司（上海）") == "甲方某某公司上海"
+
+
+def test_match_tolerates_function_word_difference() -> None:
+    """真实合同里常见「提起诉讼」与金标「诉讼」的差别，不该判错。"""
+    assert match(
+        "发包人所在地人民法院诉讼",
+        "友好协商解决，协商不成的,双方均有权向发包人所在地人民法院提起诉讼",
+    )
+
+
+def test_match_rejects_unrelated_long_text() -> None:
+    assert not match("发包人所在地人民法院诉讼", "提交北京仲裁委员会仲裁，裁决为终局")
