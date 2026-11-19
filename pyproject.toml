@@ -40,7 +40,13 @@ addopts = "-q"
 line-length = 100
 target-version = "py311"
 # Alembic 自动生成的迁移脚本不手改，格式由工具决定
-extend-exclude = ["migrations/versions"]
+# .interview_build 是本地面试工具目录，嵌套 clone 是别的项目，都不参与本仓库 lint
+extend-exclude = [
+    "migrations/versions",
+    ".interview_build",
+    "Contract-qa-RAG",
+    "contract-entry-Agent",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]

@@ -108,6 +108,12 @@ def session_scope() -> Iterator[Session]:
         yield session
 
 
+def get_session() -> Iterator[Session]:
+    """FastAPI 依赖：每个请求一条独立会话，事务边界由 Database.session 管。"""
+    with get_database().session() as session:
+        yield session
+
+
 _database: Database | None = None
 
 
@@ -136,6 +142,7 @@ __all__ = [
     "Database",
     "create_db_engine",
     "get_database",
+    "get_session",
     "reset_database",
     "session_scope",
     "set_database",

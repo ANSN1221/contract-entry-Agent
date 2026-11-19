@@ -16,7 +16,7 @@ def assert_error_shape(body: dict, code: str) -> None:
 
 
 def test_unknown_path_returns_unified_404(client: TestClient) -> None:
-    resp = client.get("/api/v1/tasks/does-not-exist")
+    resp = client.get("/api/v1/does-not-exist")
     assert resp.status_code == 404
     assert_error_shape(resp.json(), "NOT_FOUND")
     # 默认 HTTP 短语翻成中文，不把 "Not Found" 直接甩给前端

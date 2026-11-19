@@ -11,7 +11,7 @@ from sqlmodel import Session
 from app.config import Settings
 from app.main import create_app
 from app.models import Task
-from app.store import Database
+from app.store import Database, reset_database, set_database
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -46,6 +46,18 @@ def file_db(tmp_path: Path) -> Iterator[Database]:
     database.create_all()
     yield database
     database.dispose()
+
+
+@pytest.fixture()
+def api_client(file_db: Database) -> Iterator[TestClient]:
+    """HTTP 集成测试专用：把进程单例数据库换成临时文件库，请求走真实路由链。"""
+    set_database(file_db)
+    settings = Settings(env="test", log_level="WARNING", rate_limit_per_minute=0)
+    try:
+        with TestClient(create_app(settings)) as c:
+            yield c
+    finally:
+        reset_database()
 
 
 @pytest.fixture()

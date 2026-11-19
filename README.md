@@ -62,14 +62,17 @@ app/
 ├── middleware.py      # request_id 贯穿 / 访问日志 / 滑窗限流
 ├── log.py             # structlog 配置
 ├── models.py          # Task / TaskTransition / TaskField，12 字段清单
-├── store.py           # 引擎、会话、SQLite PRAGMA
+├── store.py           # 引擎、会话、SQLite PRAGMA + get_session 请求级会话依赖
+├── repository.py      # 任务仓储层：接口层不直接写 SQL，业务失败翻译成 AppError
+├── schemas.py         # 接口契约：请求/响应 pydantic 模型，与数据库模型分开演化
 ├── state_machine.py   # 白名单迁移 + 乐观锁 + 审计
 ├── adapters/
 │   └── rag.py         # contract-qa 适配层（双路召回 + 引用校验的边界）
 └── api/
     └── v1/
         ├── __init__.py  # v1 路由汇总
-        └── health.py    # /healthz /readyz
+        ├── health.py    # /healthz /readyz
+        └── tasks.py     # 任务 CRUD + 状态迁移 + 审计时间线
 migrations/            # Alembic 迁移脚本（versions/ 下按时间累积）
 alembic.ini            # 迁移工具配置（连接串由 env.py 从 config 注入）
 docs/                  # 文件名中英对照等说明文档
@@ -118,10 +121,20 @@ pending ──→ running ──→ await_confirm ──→ done
 | --- | --- | --- |
 | 11-18 | 仓库骨架 + uv 装配 + 空 FastAPI + 统一错误体 | 已完成 |
 | 11-19 ~ 11-20 | 数据模型 + 迁移 + 状态机 + 单测 | 已完成（提前） |
-| 11-23 ~ 11-24 | 仓储层 + 任务 CRUD API + 集成测试 | 待做 |
+| 11-23 ~ 11-24 | 仓储层 + 任务 CRUD API + 集成测试 | 已完成（提前，11-19） |
+| 11-25 ~ 11-27 | 工具与主链路（条款检索 / 证据校验 / 抽取提示词 / 编排） | 待做 |
 | 后续 | 见项目计划书第八章 | — |
 
-已完成：`uv` 工程装配、路径依赖接入、应用工厂、统一错误体、request_id 中间件、限流、结构化日志、`/healthz` `/readyz`、SQLModel 三张表、Alembic 初始迁移、状态机白名单 + 乐观锁 + 审计链、67 条测试。
+已完成：`uv` 工程装配、路径依赖接入、应用工厂、统一错误体、request_id 中间件、限流、结构化日志、`/healthz` `/readyz`、SQLModel 三张表、Alembic 初始迁移、状态机白名单 + 乐观锁 + 审计链、任务仓储层、任务 CRUD API（幂等创建 / 分页 / 状态筛选 / 状态迁移）、83 条测试。
+
+## 任务 API
+
+| 端点 | 说明 |
+| --- | --- |
+| `POST /api/v1/tasks` | 创建任务（JSON 元数据）；带 `Idempotency-Key` 头重复提交返回同一任务 |
+| `GET /api/v1/tasks` | 分页列表：`offset`/`limit`（默认 0/20，上限 100）+ `status` 筛选，信封 `{items, total, offset, limit}` |
+| `GET /api/v1/tasks/{id}` | 详情 + 状态迁移审计时间线 |
+| `POST /api/v1/tasks/{id}/transitions` | 状态迁移：`{to_status, version, reason?, actor?}`；版本不符 409 `CONCURRENT_MODIFICATION`，非法迁移 409 `INVALID_TRANSITION` |
 
 ## 设计约定
 
