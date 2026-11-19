@@ -48,6 +48,8 @@ uv sync --extra dev
 | 生成合成合同样例 | `uv run python scripts/make_sample_contract.py` |
 | 跑真实模型链路测试 | `RUN_LIVE_LLM=1 uv run pytest tests/test_extract_live.py` |
 | 跑评测 | `uv run python scripts/evaluate.py` |
+| 前端开发 | `cd frontend && npm run dev`（代理到 8000） |
+| 前端构建 | `cd frontend && npm run build`（产物由后端托管） |
 | 建库 / 升级到最新 | `uv run alembic upgrade head` |
 | 改完模型生成迁移 | `uv run alembic revision --autogenerate -m "描述"` |
 | 回退一步 | `uv run alembic downgrade -1` |
@@ -82,6 +84,18 @@ alembic.ini            # 迁移工具配置（连接串由 env.py 从 config 注
 docs/                  # 文件名中英对照等说明文档
 tests/                 # 状态机单测 / 模型约束 / API 契约（随排期补）
 ```
+
+## 界面
+
+构建产物存在时由后端直接托管，部署只需要一个进程、一个端口（`uvicorn app.main:app`）。
+
+![界面截图](docs/screenshot.png)
+
+三个区域：左侧任务列表与状态筛选，中间字段表格（低置信/证据不通过的行标黄），下方确认卡与事件时间线。
+
+- **事件时间线走 SSE**：执行中实时追加，不用轮询
+- **确认卡直接改字段**：只提交改动过的值，未改动字段一并视为人工确认
+- **凭证存 localStorage**：内部工具；真要公网部署应换 httpOnly cookie
 
 ## 状态机
 
@@ -130,9 +144,10 @@ pending ──→ running ──→ await_confirm ──→ done
 | 11-30 | 幂等键 + confirm_token + 乐观锁 | 已完成（幂等键在创建、token 在确认、乐观锁在两处） |
 | 12-01 | SSE 事件通道 + 断点续跑 | 已完成 |
 | 12-02 ~ 12-04 | 异常分支细化 + 指标 + 评测 | 已完成 |
+| 12-07 | 前端薄壳 + 部署 | 前端已完成，部署待定 |
 | 后续 | 见项目计划书第八章 | — |
 
-已完成：`uv` 工程装配、路径依赖接入、应用工厂、统一错误体、request_id 中间件、限流、结构化日志、`/healthz` `/readyz`、SQLModel 四张表、Alembic 迁移、状态机白名单 + 乐观锁 + 审计链、任务仓储层、任务 CRUD API、Bearer 鉴权、工具白名单与参数强校验、条款检索工具、12 字段抽取与证据校验、LangGraph 主图、后台执行器、一次性 confirm_token 确认写库、SSE 事件流、SQLite 持久化断点续跑、Prometheus 指标、评测脚本、死信上限、238 条测试。
+已完成：`uv` 工程装配、路径依赖接入、应用工厂、统一错误体、request_id 中间件、限流、结构化日志、`/healthz` `/readyz`、SQLModel 四张表、Alembic 迁移、状态机白名单 + 乐观锁 + 审计链、任务仓储层、任务 CRUD API、Bearer 鉴权、工具白名单与参数强校验、条款检索工具、12 字段抽取与证据校验、LangGraph 主图、后台执行器、一次性 confirm_token 确认写库、SSE 事件流、SQLite 持久化断点续跑、Prometheus 指标、评测脚本、死信上限、React 前端（列表 / 字段 / 确认卡 / SSE 时间线）、238 条测试。
 
 ## 鉴权
 
