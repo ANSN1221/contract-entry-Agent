@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, TypedDict
 
 from langgraph.checkpoint.memory import MemorySaver
@@ -197,15 +198,29 @@ def build_graph(deps: GraphDeps, checkpointer: Any = None):  # noqa: ANN201
 
 
 def make_checkpointer(db_path: str) -> Any:
-    """当前用内存 checkpointer。
-
-    为什么不是 SqliteSaver：LangGraph 的同步 SqliteSaver 不支持 `ainvoke`，
-    会直接抛 NotImplementedError；对应的 `AsyncSqliteSaver` 需要 aiosqlite，
-    并且要跟着应用生命周期开关连接。断点续跑（D7）时整体换过去，
-    `thread_id = task_id` 的用法不变，所以这一层现在保持接口稳定。
-    """
-    log.info("checkpoint_backend", backend="memory", note="D7 换 AsyncSqliteSaver 持久化")
+    """同步形态的内存 checkpointer，留给单测与非持久化场景。"""
+    log.info("checkpoint_backend", backend="memory")
     return MemorySaver()
+
+
+async def make_async_checkpointer(db_path: str) -> tuple[Any, Any]:
+    """持久化 checkpointer：返回 (saver, 连接)，连接由调用方在停机时关闭。
+
+    为什么必须是异步版：`Saver` 的同步实现不支持 `ainvoke`，会抛
+    NotImplementedError。`AsyncSqliteSaver` 需要 aiosqlite，缺依赖时退回内存，
+    避免因为一个可选依赖把整个服务起不来。
+    """
+    try:
+        import aiosqlite
+        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        conn = await aiosqlite.connect(db_path)
+        log.info("checkpoint_backend", backend="sqlite", path=db_path)
+        return AsyncSqliteSaver(conn), conn
+    except Exception as exc:  # pragma: no cover - 依赖缺失时才走到
+        log.warning("checkpoint_fallback_memory", error=str(exc))
+        return MemorySaver(), None
 
 
 def initial_state(task_id: str, *, max_rounds: int = MAX_ROUNDS_DEFAULT) -> ExtractionState:

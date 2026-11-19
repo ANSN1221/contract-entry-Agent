@@ -118,7 +118,12 @@ def verify_token(token: str, *, secret: str, now: int | None = None) -> Principa
 
 
 def _extract_token(request: Request) -> str | None:
-    """同时接受 Authorization: Bearer xxx 和 X-API-Key: xxx。"""
+    """同时接受 Authorization: Bearer xxx 和 X-API-Key: xxx。
+
+    例外：SSE 端点额外允许 `?token=`。浏览器 `EventSource` 不能自定义请求头，
+    不给这条路前端就没法订阅事件流。只在 `/events` 上开，别到处开——
+    查询串会进访问日志、也会留在浏览器历史里。
+    """
     header = request.headers.get("Authorization", "")
     if header:
         scheme, _, value = header.partition(" ")
@@ -126,7 +131,11 @@ def _extract_token(request: Request) -> str | None:
             return value.strip()
         return None
     api_key = request.headers.get("X-API-Key", "").strip()
-    return api_key or None
+    if api_key:
+        return api_key
+    if request.method == "GET" and request.url.path.endswith("/events"):
+        return request.query_params.get("token") or None
+    return None
 
 
 def authenticate(request: Request, settings: Settings) -> Principal | None:

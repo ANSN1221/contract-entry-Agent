@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.errors import BadRequest, Conflict, Forbidden, NotFound
+from app.events import EventType, emit
 from app.models import CONTRACT_FIELD_KEYS, Task, TaskField, TaskStatus, TaskTransition, utcnow
 from app.state_machine import (
     ConcurrentModification,
@@ -207,6 +208,13 @@ class TaskRepository:
                 code="INVALID_TRANSITION",
                 message=f"不允许的状态迁移：{exc.current} → {exc.target}",
             ) from exc
+
+        emit(
+            session,
+            task_id,
+            EventType.CONFIRMED,
+            {"actor": actor, "edited": [key for key, _ in updates]},
+        )
         return task
 
     def _apply_updates(

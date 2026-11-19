@@ -174,3 +174,19 @@ class TaskField(SQLModel, table=True):
 
     created_at: datetime = Field(default_factory=utcnow, sa_column=_ts())
     updated_at: datetime = Field(default_factory=utcnow, sa_column=_ts())
+
+
+class Event(SQLModel, table=True):
+    """任务事件流。自增 id 就是 SSE 的 `Last-Event-ID`，断线后靠它补发。
+
+    为什么不复用 TaskTransition：状态迁移只是事件的一种。检索完成、抽取完成、
+    校验结论这些不进状态机，前端时间线却要显示，所以单独一张表。
+    """
+
+    __tablename__ = "event"
+
+    id: int | None = Field(default=None, primary_key=True)
+    task_id: str = Field(sa_column=Column(String(32), nullable=False, index=True))
+    type: str = Field(sa_column=Column(String(40), nullable=False, index=True))
+    payload: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    created_at: datetime = Field(default_factory=utcnow, sa_column=_ts(index=True))

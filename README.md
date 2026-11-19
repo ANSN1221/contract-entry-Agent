@@ -127,10 +127,10 @@ pending ──→ running ──→ await_confirm ──→ done
 | 11-23 ~ 11-24 | 仓储层 + 任务 CRUD API + 集成测试 | 已完成（提前，11-19） |
 | 11-25 ~ 11-27 | 工具与主链路（条款检索 / 证据校验 / 抽取提示词 / 编排） | 全部完成：检索 + 抽取 + 校验 + 主图 + 执行器 |
 | 11-30 | 幂等键 + confirm_token + 乐观锁 | 已完成（幂等键在创建、token 在确认、乐观锁在两处） |
-| 12-01 | SSE 事件通道 + 断点续跑 | 待做 |
+| 12-01 | SSE 事件通道 + 断点续跑 | 已完成 |
 | 后续 | 见项目计划书第八章 | — |
 
-已完成：`uv` 工程装配、路径依赖接入、应用工厂、统一错误体、request_id 中间件、限流、结构化日志、`/healthz` `/readyz`、SQLModel 三张表、Alembic 初始迁移、状态机白名单 + 乐观锁 + 审计链、任务仓储层、任务 CRUD API（幂等创建 / 分页 / 状态筛选 / 状态迁移）、Bearer 鉴权（短期签名 token + 静态 token）、工具白名单与参数强校验、条款检索工具、12 字段抽取与证据校验、LangGraph 主图、后台执行器、一次性 confirm_token 确认写库、192 条测试。
+已完成：`uv` 工程装配、路径依赖接入、应用工厂、统一错误体、request_id 中间件、限流、结构化日志、`/healthz` `/readyz`、SQLModel 四张表、Alembic 迁移、状态机白名单 + 乐观锁 + 审计链、任务仓储层、任务 CRUD API、Bearer 鉴权、工具白名单与参数强校验、条款检索工具、12 字段抽取与证据校验、LangGraph 主图、后台执行器、一次性 confirm_token 确认写库、SSE 事件流、SQLite 持久化断点续跑、208 条测试。
 
 ## 鉴权
 
@@ -166,6 +166,7 @@ token 是 `v1.<payload>.<签名>` 三段式，HS256 自签，不引 JWT 库：�
 | `POST /api/v1/tasks/{id}/transitions` | 状态迁移：`{to_status, version, reason?, actor?}`；版本不符 409 `CONCURRENT_MODIFICATION`，非法迁移 409 `INVALID_TRANSITION` |
 | `POST /api/v1/tasks/{id}/run` | 执行任务（检索 → 抽取 → 校验 → 待确认）；`?wait=true` 同步等结果，`?resume=true` 从断点续跑 |
 | `POST /api/v1/tasks/{id}/confirm` | 人工确认：带一次性 `confirm_token` + 可选的人工修正字段，成功后转 `done` 并写库；二次提交 409 |
+| `GET /api/v1/tasks/{id}/events` | SSE 事件流：`Last-Event-ID` 断线补发，`?follow=false` 只回放已有事件，`?token=` 给不能设请求头的 `EventSource` 用 |
 
 ## 执行链路
 
@@ -185,6 +186,15 @@ await_confirm（有低置信 / 未验证 / 校验不通过字段）  或  done�
 POST /confirm（带 token，可附人工修正）
    ↓
 done：字段落库，token 作废，审计记录 human:<subject>
+```
+
+全过程写 `event` 表，前端订阅 `GET /tasks/{id}/events` 就能画时间线：
+
+```
+id=1  task.running
+id=2  extraction.done      {"filled":11,"rounds":1,"tokens":{...}}
+id=3  verification.done    {"supported":11,"unsupported":[],"needs_review":["effective_date"]}
+id=4  task.await_confirm
 ```
 
 确认接口四道闸门，按「越便宜越先」排：任务存在 → 状态是 `await_confirm` → token 对且未用过 → 版本号对。任何一道不过都返回 409/403/404，不会写脏数据。
@@ -229,8 +239,21 @@ effective_date      -                       0.00  -             → 待确认（
 关键点：`effective_date` 没抽出来是**正确行为**——合同只写了签订日期与履行期限起点，
 模型没有拿「2026-04-01 开始履行」去猜生效日期。这一条比抽对 11 个字段更能说明约束生效。
 
-## 设计约定
+## 事件流与断点续跑
 
+**事件表与状态迁移分开**：迁移是状态机的账（谁把状态改成什么），事件是给前端看的叙事（检索完成、抽取完成、校验结论）。后者不进状态机，但时间线要显示，所以单独一张 `event` 表，自增 `id` 直接当 SSE 的 `Last-Event-ID` 用。
+
+| 细节 | 处理 |
+| --- | --- |
+| 断线重连 | 浏览器 `EventSource` 自动带 `Last-Event-ID`，头优先于 `?since=` |
+| 终态收尾 | 任务到 done/failed 且事件读完，流主动结束，不留空连接 |
+| 心跳 | 每 15 秒一个注释帧（`: ping`），防代理掐断空闲连接 |
+| 代理缓冲 | 响应头带 `X-Accel-Buffering: no`，否则 nginx 会攒着一起发 |
+| 鉴权 | `EventSource` 不能设请求头，仅 SSE 端点额外接受 `?token=` |
+
+**断点续跑**用 `AsyncSqliteSaver`，`thread_id` 就是 `task_id`。为什么必须是异步版：LangGraph 的同步 `SqliteSaver` 不支持 `ainvoke`，会直接抛 `NotImplementedError`。连接随应用生命周期开关，测试里换连接即可模拟「进程被 kill 再起来」，图会从最后一个成功的节点继续，已完成节点不重跑。
+
+## 设计约定
 - **状态机**：白名单表 `ALLOWED_TRANSITIONS` 是唯一判定源，非法迁移抛 `InvalidTransition`；迁移与审计写在同一事务，中途失败不留半条记录。
 - **状态存字符串不存枚举**：跨 SQLite / PostgreSQL 更省事，合法性由状态机保证，数据库只负责存。
 - **乐观锁**：`Task.version` 做 CAS（`WHERE version = ?`），并发改同一条任务时后到者失败而非覆盖。

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import secrets
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -24,6 +25,7 @@ from sqlmodel import Session, delete, select
 
 from app.config import Settings
 from app.errors import Conflict, NotFound
+from app.events import EventType, emit
 from app.log import get_logger
 from app.models import Task, TaskField, TaskStatus, utcnow
 from app.state_machine import InvalidTransition, transition
@@ -63,21 +65,36 @@ class TaskRunner:
         self,
         *,
         database: Database,
-        graph: Any,
+        graph: Any | None = None,
         settings: Settings,
         workers: int | None = None,
+        graph_factory: Callable[[], Awaitable[tuple[Any, Any]]] | None = None,
     ) -> None:
         self.database = database
         self.graph = graph
         self.settings = settings
         self.workers = settings.runner_workers if workers is None else workers
+        self.graph_factory = graph_factory
+        self._checkpoint_conn: Any = None
         self._queue: asyncio.Queue[str] = asyncio.Queue()
         self._tasks: list[asyncio.Task[None]] = []
         self._stopping = False
 
+    async def _ensure_graph(self) -> Any:
+        """图可能依赖异步资源（持久化 checkpointer 的连接），所以懒加载。
+
+        factory 返回 `(图, 需要关闭的连接)`，连接的生命周期绑在 runner 上。
+        """
+        if self.graph is None:
+            if self.graph_factory is None:
+                raise RuntimeError("未提供 graph 或 graph_factory")
+            self.graph, self._checkpoint_conn = await self.graph_factory()
+        return self.graph
+
     # ---------- 队列 ----------
 
     async def start(self) -> None:
+        await self._ensure_graph()
         if self.workers <= 0:
             log.info("runner_disabled")
             return
@@ -98,9 +115,17 @@ class TaskRunner:
             except Exception:  # worker 内部异常已在 _worker 里记过日志
                 log.warning("runner_worker_exit_with_error")
         self._tasks.clear()
+        if self._checkpoint_conn is not None:
+            try:
+                await self._checkpoint_conn.close()
+            except Exception:  # pragma: no cover - 关闭失败不该阻塞停机
+                log.warning("checkpoint_close_failed")
+            self._checkpoint_conn = None
         log.info("runner_stopped")
 
     async def submit(self, task_id: str) -> None:
+        with self.database.session() as session:
+            emit(session, task_id, EventType.QUEUED, {"via": "api"})
         await self._queue.put(task_id)
 
     async def _worker(self, index: int) -> None:
@@ -118,12 +143,13 @@ class TaskRunner:
     # ---------- 执行 ----------
 
     async def run_task(self, task_id: str, *, resume: bool = False) -> RunOutcome:
+        graph = await self._ensure_graph()
         self._begin(task_id, resume=resume)
 
         config = {"configurable": {"thread_id": task_id}}
         try:
             result = await asyncio.wait_for(
-                self.graph.ainvoke(
+                graph.ainvoke(
                     {"task_id": task_id} if resume else _initial(task_id),
                     config=config,
                 ),
@@ -156,6 +182,7 @@ class TaskRunner:
 
             if task.status == TaskStatus.PENDING.value:
                 transition(session, task, TaskStatus.RUNNING, reason="调度器领取", actor="runner")
+                emit(session, task_id, EventType.RUNNING, {"attempt": task.attempt + 1})
             elif task.status == TaskStatus.RUNNING.value and not resume:
                 raise Conflict(
                     code="ALREADY_RUNNING",
@@ -182,7 +209,26 @@ class TaskRunner:
             if task is None or task.is_terminal:
                 return RunOutcome(task_id=task_id, status="skipped", outcome=outcome)
 
-            _persist_fields(session, task_id, drafts, result.get("verified", {}))
+            verified = dict(result.get("verified", {}))
+            _persist_fields(session, task_id, drafts, verified)
+
+            filled = sum(1 for draft in drafts if draft.get("value"))
+            emit(
+                session,
+                task_id,
+                EventType.EXTRACTED,
+                {"filled": filled, "rounds": rounds, "tokens": tokens},
+            )
+            emit(
+                session,
+                task_id,
+                EventType.VERIFIED,
+                {
+                    "supported": sum(1 for v in verified.values() if v == "supported"),
+                    "unsupported": unsupported,
+                    "needs_review": review_keys,
+                },
+            )
 
             task.round_count = rounds
             task.updated_at = utcnow()
@@ -204,6 +250,8 @@ class TaskRunner:
                 )
             except InvalidTransition as exc:
                 log.warning("runner_invalid_transition", task_id=task_id, error=str(exc))
+
+            _emit_status_event(session, task_id, target, review_keys, error)
 
             confirm_token = None
             if task.status == TaskStatus.AWAIT_CONFIRM.value:
@@ -237,6 +285,7 @@ class TaskRunner:
             task.updated_at = utcnow()
             session.add(task)
             session.flush()
+            emit(session, task_id, EventType.FAILED, {"code": code, "message": message})
             try:
                 transition(session, task, TaskStatus.FAILED, reason=message, actor="runner")
             except InvalidTransition:
@@ -248,6 +297,23 @@ def _initial(task_id: str) -> dict[str, Any]:
     from app.graph import initial_state
 
     return dict(initial_state(task_id))
+
+
+def _emit_status_event(
+    session: Session,
+    task_id: str,
+    target: TaskStatus,
+    review_keys: list[str],
+    error: str,
+) -> None:
+    if target == TaskStatus.AWAIT_CONFIRM:
+        emit(session, task_id, EventType.AWAIT_CONFIRM, {"needs_review": review_keys})
+    elif target == TaskStatus.DONE:
+        emit(session, task_id, EventType.DONE, {})
+    elif target == TaskStatus.BLOCKED:
+        emit(session, task_id, EventType.FAILED, {"status": "blocked"})
+    else:
+        emit(session, task_id, EventType.FAILED, {"error": error or "抽取失败"})
 
 
 def _persist_fields(
@@ -283,9 +349,13 @@ def load_fields(session: Session, task_id: str) -> list[TaskField]:
 
 
 def build_runner(settings: Settings, database: Database) -> TaskRunner:
-    """按配置装配真实依赖：检索器、模型、校验工具。"""
+    """按配置装配真实依赖：检索器、模型、校验工具。
+
+    图不在构造时建，因为持久化 checkpointer 要先建立异步连接；
+    交给 `graph_factory`，由 `TaskRunner.start()` 在事件循环里完成。
+    """
     from app.adapters.rag import get_clause, search_clauses
-    from app.graph import GraphDeps, build_graph, make_checkpointer
+    from app.graph import GraphDeps, build_graph, make_async_checkpointer
     from app.llm import LlmClient
     from app.tools import run_tool
 
@@ -306,6 +376,16 @@ def build_runner(settings: Settings, database: Database) -> TaskRunner:
         verify=verify,
         threshold=settings.extract_confidence_threshold,
     )
-    checkpointer = make_checkpointer(settings.checkpoint_path)
-    graph = build_graph(deps, checkpointer=checkpointer)
-    return TaskRunner(database=database, graph=graph, settings=settings)
+
+    holder: dict[str, Any] = {}
+
+    async def graph_factory() -> tuple[Any, Any]:
+        checkpointer, conn = await make_async_checkpointer(settings.checkpoint_path)
+        holder["conn"] = conn
+        return build_graph(deps, checkpointer=checkpointer), conn
+
+    return TaskRunner(
+        database=database,
+        settings=settings,
+        graph_factory=graph_factory,
+    )
